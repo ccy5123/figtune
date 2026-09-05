@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+
+# figtune 산출물 (원본 스크립트 옆에 생긴다)
+*.figtune.yaml
+*_style.py
+*_norm.py

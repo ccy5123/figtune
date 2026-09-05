@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "figtune"
+version = "0.1.0"
+description = "matplotlib figure를 GUI로 미세조정하고 재현 가능한 코드로 남기는 도구"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["matplotlib>=3.7", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+pptx = ["python-pptx>=0.6.21"]
+dev = ["pytest>=7", "python-pptx>=0.6.21"]
+
+[project.scripts]
+figtune = "figtune.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["figtune*"]

@@ -1,0 +1,248 @@
+"""figtune 명령줄 진입점.
+
+서브커맨드는 PowerPoint 애드인이 호출할 안정된 계약이기도 하다.
+출력 형식과 종료 코드를 함부로 바꾸지 말 것.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+SUBCOMMANDS = {"edit", "render", "refresh", "merge", "normalize"}
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="figtune",
+        description="matplotlib figure를 GUI로 미세조정하고 코드로 남깁니다.")
+    sub = ap.add_subparsers(dest="cmd")
+
+    def common(p):
+        p.add_argument("--python", metavar="PATH",
+                       help="스크립트를 실행할 인터프리터 (다른 venv/얼려진 앱인 경우)")
+        p.add_argument("--dpi", type=int, default=300)
+        return p
+
+    e = common(sub.add_parser("edit", help="GUI로 편집 (PowerPoint 애드인이 호출)"))
+    e.add_argument("script")
+    e.add_argument("--spec-in", metavar="PATH", help="시작 spec (없으면 디스크에서)")
+    e.add_argument("--spec-out", metavar="PATH", help="저장 시 spec을 여기에도 기록")
+    e.add_argument("--png-out", metavar="PATH", help="저장 시 이미지를 여기에도 기록")
+
+    r = common(sub.add_parser("render", help="GUI 없이 이미지만 생성"))
+    r.add_argument("script")
+    r.add_argument("--spec-in", metavar="PATH")
+    r.add_argument("-o", "--out", required=True)
+
+    f = common(sub.add_parser("refresh", help="pptx 안의 figtune 그림을 모두 재생성"))
+    f.add_argument("deck")
+    f.add_argument("-o", "--out", help="다른 파일로 저장 (기본: 덮어쓰기)")
+    f.add_argument("--check", action="store_true",
+                   help="쓰지 않고 무엇이 바뀌는지만 보고")
+
+    m = common(sub.add_parser(
+        "merge", help="여러 패널 스크립트를 하나의 figure로 합침"))
+    m.add_argument("scripts", nargs="+", help="패널 스크립트들 (배치 순서대로)")
+    m.add_argument("-o", "--out", required=True, help="생성할 병합 스크립트 (.py)")
+    m.add_argument("--rows", type=int)
+    m.add_argument("--cols", type=int)
+    m.add_argument("--panel-size", default="4x3", metavar="WxH",
+                   help="패널 하나의 크기(인치). 기본 4x3")
+    m.add_argument("--labels", default="({a})",
+                   help="패널 라벨 서식. 기본 '({a})'. 끄려면 빈 문자열")
+    m.add_argument("--svg", metavar="PATH",
+                   help="모드 B가 불가능할 때 SVG 합성으로 대신 출력")
+    m.add_argument("--edit", action="store_true", help="생성 후 GUI를 연다")
+    m.add_argument("--normalize", action="store_true",
+                   help="정규형이 아닌 스크립트를 먼저 *_norm.py로 변환")
+
+    z = sub.add_parser("normalize", help="스크립트를 정규형으로 변환")
+    z.add_argument("scripts", nargs="+")
+    z.add_argument("--check", action="store_true", help="변환하지 않고 판정만")
+    z.add_argument("--in-place", action="store_true",
+                   help="원본을 덮어쓴다 (기본은 *_norm.py 생성)")
+    return ap
+
+
+def _grid(n: int, rows: int | None, cols: int | None) -> tuple[int, int]:
+    """행/열이 지정되지 않으면 논문에서 흔한 모양으로 고른다."""
+    if rows and cols:
+        return rows, cols
+    if rows:
+        return rows, -(-n // rows)
+    if cols:
+        return -(-n // cols), cols
+    return ({1: (1, 1), 2: (1, 2), 3: (1, 3), 4: (2, 2),
+             5: (2, 3), 6: (2, 3), 8: (2, 4), 9: (3, 3)}.get(n)
+            or (-(-n // 3), 3))
+
+
+def _load_spec(path):
+    from .core.spec import Spec
+    return Spec.load(path) if path else None
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # 하위 호환: `figtune script.py` 는 `figtune edit script.py`
+    if argv and argv[0] not in SUBCOMMANDS and not argv[0].startswith("-"):
+        argv.insert(0, "refresh" if argv[0].lower().endswith(".pptx") else "edit")
+
+    args = _build_parser().parse_args(argv)
+    if args.cmd is None:
+        _build_parser().print_help()
+        return 2
+
+    if args.cmd == "refresh":
+        deck = Path(args.deck)
+        if not deck.exists():
+            print(f"파일 없음: {deck}", file=sys.stderr)
+            return 2
+        from .office import pptx_link as PL
+        result = PL.refresh_deck(deck, args.out, python=args.python,
+                                 check_only=args.check)
+        verb = "변경예정" if args.check else "갱신"
+        for label in result.updated:
+            d = result.data_changes.get(label) or {}
+            marks = []
+            if d.get("changed"):
+                marks.append(f"데이터 수정 {len(d['changed'])}")
+            if d.get("added"):
+                marks.append(f"추가 {len(d['added'])}")
+            if d.get("removed"):
+                marks.append(f"사라짐 {len(d['removed'])}")
+            note = f"  [{', '.join(marks)}]" if marks else ""
+            print(f"{verb}  {label}{note}")
+        for label, why in result.skipped:
+            print(f"건너뜀 {label}: {why}", file=sys.stderr)
+        print(result.summary())
+        return 1 if result.skipped and not result.updated else 0
+
+    if args.cmd == "normalize":
+        return _normalize(args)
+
+    if args.cmd == "merge":
+        return _merge(args)
+
+    script = Path(args.script)
+    if not script.exists():
+        print(f"파일 없음: {script}", file=sys.stderr)
+        return 2
+
+    if args.cmd == "render":
+        import matplotlib
+        matplotlib.use("Agg")
+        from .core.session import Session
+        s = Session(python=args.python)
+        rep = s.open(script, spec=_load_spec(args.spec_in))
+        if rep.stale:
+            print(f"경고: 지문 불일치 {len(rep.stale)}건", file=sys.stderr)
+        s.export(args.out, dpi=args.dpi)
+        print(args.out)
+        return 0
+
+    from .ui.qt.main import launch
+    return launch(script, python=args.python, spec_in=args.spec_in,
+                  spec_out=args.spec_out, png_out=args.png_out, dpi=args.dpi)
+
+
+def _normalize(args) -> int:
+    from .core import normalize as N
+
+    rc = 0
+    for name in args.scripts:
+        p = Path(name)
+        if not p.exists():
+            print(f"파일 없음: {p}", file=sys.stderr)
+            rc = 2
+            continue
+        if args.check:
+            rep = N.analyze(p.read_text(encoding="utf-8"))
+            mark = "OK  " if rep.ok else "불가"
+            print(f"{mark} {p}: {rep.reasons[0]}")
+            for extra in rep.reasons[1:]:
+                print(f"       {extra}")
+            rc = rc or (0 if rep.ok else 1)
+            continue
+        dst, rep = N.normalize_file(p, in_place=args.in_place)
+        if dst is None:
+            print(f"불가 {p}", file=sys.stderr)
+            for r in rep.reasons:
+                print(f"       {r}", file=sys.stderr)
+            rc = 1
+        else:
+            note = " (이미 정규형)" if rep.n_plot_stmts == 0 else ""
+            print(f"OK   {p} → {dst}{note}")
+    return rc
+
+
+def _merge(args) -> int:
+    from .core.montage_build import (MontageSpec, PanelRef,
+                                     can_use_subplot_mode,
+                                     generate_subplot_script)
+
+    scripts = [Path(s) for s in args.scripts]
+    missing = [str(s) for s in scripts if not s.exists()]
+    if missing:
+        print("파일 없음: " + ", ".join(missing), file=sys.stderr)
+        return 2
+
+    if getattr(args, "normalize", False):
+        from .core import normalize as N
+        converted = []
+        for sc in scripts:
+            dst, rep = N.normalize_file(sc)
+            if dst is None:
+                print(f"정규화 실패: {sc}", file=sys.stderr)
+                for r in rep.reasons:
+                    print(f"  {r}", file=sys.stderr)
+                return 1
+            if dst != sc:
+                print(f"정규화  {sc} → {dst}")
+            converted.append(dst)
+        scripts = converted
+
+    rows, cols = _grid(len(scripts), args.rows, args.cols)
+    try:
+        w, h = (float(v) for v in args.panel_size.lower().split("x"))
+    except ValueError:
+        print("--panel-size 형식은 WxH 입니다 (예: 4x3)", file=sys.stderr)
+        return 2
+
+    mspec = MontageSpec(rows=rows, cols=cols,
+                        label_template=args.labels or "",
+                        auto_label=bool(args.labels),
+                        panels=[PanelRef(script=str(s.resolve()))
+                                for s in scripts])
+
+    out = Path(args.out)
+    try:
+        generate_subplot_script(mspec, out, base_dir=Path.cwd(),
+                                panel_size=(w, h))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        if not args.svg:
+            print("\n원본을 고칠 수 없다면 --svg PATH 로 SVG 합성을 쓰세요. "
+                  "다만 그 결과는 하나의 Figure가 아니며 통째로 편집할 수 "
+                  "없습니다.", file=sys.stderr)
+            return 1
+        from .core import montage as M
+        from .core.montage_build import build as build_montage
+        result = build_montage(mspec, base_dir=Path.cwd(), python=args.python)
+        M.write(result, args.svg)
+        print(f"{args.svg}  (SVG 합성 — 하나의 Figure가 아닙니다)")
+        return 0
+
+    print(f"{out}  ({rows}×{cols}, 패널 {len(scripts)}개)")
+    print("평범한 matplotlib 스크립트입니다. figtune으로 열어 편집하세요:")
+    print(f"  figtune {out}")
+    if args.edit:
+        from .ui.qt.main import launch
+        return launch(out, python=args.python)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
