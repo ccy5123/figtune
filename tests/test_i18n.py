@@ -107,6 +107,37 @@ def test_catalog_has_no_stale_entries():
         + "\n  ".join(repr(k) for k in stale[:20]))
 
 
+# --- 2b. 라벨이 서로 다른 개념을 겹쳐 쓰지 않는다 -----------------------------
+
+# 같은 라벨을 나눠 쓰는 것이 정당한 짝. msgid가 원문 그 자체이므로 라벨을
+# 겹쳐 쓰면 두 개념이 번역에서 한 단어로 합쳐진다. 여기 넣기 전에 두 속성이
+# 사용자에게 정말 같은 것을 뜻하는지 확인할 것.
+SHARED_LABELS = {
+    "두께": {"linewidth", "width"},      # 축선 두께와 눈금 두께. 같은 '굵기'다
+    "마커 크기": {"markersize", "sizes"},  # Line2D와 collection의 같은 개념
+}
+
+
+def test_labels_do_not_collapse_distinct_concepts():
+    """한 라벨이 서로 다른 속성 두 개를 가리키면 번역이 둘을 합쳐 버린다.
+
+    실제로 범례의 loc(이름 있는 배치 위치)과 텍스트의 position(축 좌표)이
+    둘 다 '위치'였고, 영어로는 둘 다 Position이 되어 구분이 사라졌다.
+    """
+    from collections import defaultdict
+
+    by_label = defaultdict(set)
+    for props in P.REGISTRY.values():
+        for prop in props:
+            by_label[prop.label].add(prop.name)
+
+    bad = {lb: names for lb, names in by_label.items()
+           if len(names) > 1 and SHARED_LABELS.get(lb) != names}
+    assert not bad, (
+        "한 라벨이 여러 속성을 가리킵니다 (근거가 있으면 SHARED_LABELS에 "
+        f"적을 것): { {k: sorted(v) for k, v in bad.items()} }")
+
+
 # --- 3. 자리표시자 보존 ------------------------------------------------------
 
 def test_placeholders_survive_translation():

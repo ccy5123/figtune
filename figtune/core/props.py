@@ -77,7 +77,7 @@ REGISTRY: dict[str, list[Prop]] = {
     ],
     "text": [
         P("text", "str", "내용"),
-        P("position", "tuple2", "위치", step=0.01),
+        P("position", "tuple2", "좌표", step=0.01),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
         P("fontfamily", "font", "글꼴"),
@@ -98,7 +98,7 @@ REGISTRY: dict[str, list[Prop]] = {
     ],
     "figtext": [
         P("text", "str", "내용"),
-        P("position", "tuple2", "위치"),
+        P("position", "tuple2", "좌표"),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
         P("fontfamily", "font", "글꼴"),
@@ -110,7 +110,7 @@ REGISTRY: dict[str, list[Prop]] = {
     ],
     "txt": [
         P("text", "str", "내용"),
-        P("position", "tuple2", "위치"),
+        P("position", "tuple2", "좌표"),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
         P("fontfamily", "font", "글꼴"),
@@ -124,7 +124,7 @@ REGISTRY: dict[str, list[Prop]] = {
     ],
     "usertext": [
         P("text", "str", "내용"),
-        P("position", "tuple2", "위치"),
+        P("position", "tuple2", "좌표"),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
         P("fontfamily", "font", "글꼴"),

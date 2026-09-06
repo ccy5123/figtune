@@ -37,8 +37,10 @@ MESSAGES = {
     "가로 정렬": "H align",
     "세로 정렬": "V align",
     "표시": "Visible",
-    # 범례의 loc과 텍스트 좌표가 같은 라벨을 쓴다. 둘 다 "Position"으로 읽힌다.
+    # 범례 loc(이름 있는 배치)과 텍스트 position(축 좌표)은 다른 것이다.
+    # 한때 둘 다 "위치"였고 영어로는 구분이 사라졌다.
     "위치": "Position",
+    "좌표": "Coordinates",
     "앵커": "Anchor",
     "테두리": "Frame",
     "글자 크기": "Font size",
