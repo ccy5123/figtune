@@ -163,3 +163,59 @@ def test_figure_legend_survives_save_reopen(facet, tmp_path):
     b = tmp_path / "b.png"
     again.export(b, dpi=80)
     assert a.read_bytes() == b.read_bytes()
+
+
+# --- 범례 전용 artist -------------------------------------------------------
+
+HUE = """import seaborn as sns, pandas as pd, matplotlib.pyplot as plt
+df = pd.DataFrame({'x': [1, 2, 3, 1, 2, 3], 'y': [1, 2, 3, 2, 3, 4],
+                   'g': ['low'] * 3 + ['high'] * 3})
+fig, ax = plt.subplots()
+sns.lineplot(data=df, x='x', y='y', hue='g', ax=ax)
+"""
+
+
+@pytest.fixture
+def hue(tmp_path):
+    p = tmp_path / "hue.py"
+    p.write_text(HUE, encoding="utf-8")
+    s = Session()
+    s.open(p)
+    return s
+
+
+def test_legend_only_artists_are_marked_in_the_tree(hue):
+    """seaborn hue는 데이터 점이 0개인 Line2D를 범례용으로 남긴다.
+
+    트리는 그것을 'line2 — high'로 보여주는데, 이름만 보면 실제 계열이다.
+    색을 바꿔도 화면에 아무 일이 일어나지 않는 조용한 무동작이 되므로
+    사용자가 원인을 알 수 없다. 라벨이 스스로 밝혀야 한다.
+    """
+    empties = [ln for ln in hue.fig.axes[0].lines if len(ln.get_xdata()) == 0]
+    assert empties, "seaborn이 범례 전용 artist를 만들지 않았습니다 (전제 확인)"
+
+    labels = {n.path: n.label for n in hue.tree.walk()}
+    marked = [lb for lb in labels.values() if "(범례 전용)" in lb]
+    assert len(marked) == len(empties), \
+        f"범례 전용 표시가 없습니다: {sorted(labels.values())}"
+    # 데이터가 있는 선은 표시가 붙으면 안 된다
+    assert "high" in " ".join(marked) and "low" in " ".join(marked)
+
+
+def test_real_series_are_not_marked(tmp_path):
+    """데이터가 있는 선까지 범례 전용으로 찍으면 표시가 무의미해진다."""
+    p = tmp_path / "p.py"
+    p.write_text("import matplotlib.pyplot as plt\n"
+                 "fig, ax = plt.subplots()\n"
+                 "ax.plot([0,1],[0,1], label='a')\n", encoding="utf-8")
+    s = Session()
+    s.open(p)
+    assert not any("(범례 전용)" in n.label for n in s.tree.walk())
+
+
+def test_legend_only_marker_is_translated(hue):
+    from figtune import i18n
+    i18n.set_language("en")
+    s = Session()
+    s.open(hue.script)
+    assert any("(legend only)" in n.label for n in s.tree.walk())

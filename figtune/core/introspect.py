@@ -40,6 +40,17 @@ def _label_of(artist, fallback: str) -> str:
     return lb
 
 
+def _marked(label: str, empty: bool) -> str:
+    """그릴 것이 없는 artist임을 라벨이 스스로 밝히게 한다.
+
+    seaborn은 hue 범례를 만들려고 데이터 점이 0개인 Line2D를 축에 남긴다.
+    이름은 실제 계열('high')과 구별되지 않으므로, 표시하지 않으면 색을
+    바꿔도 화면에 아무 일이 없는 이유를 사용자가 알 방법이 없다. 편집을
+    막지는 않는다 — 값은 spec에 남고, 범례를 다시 그리면 반영된다.
+    """
+    return f"{label} {_t('(범례 전용)')}" if empty else label
+
+
 def build(fig) -> Node:
     """살아있는 Figure를 노드 트리로 변환한다."""
     root = Node("fig", "figure", "Figure", fingerprint=fp.of_figure(fig))
@@ -77,16 +88,20 @@ def build(fig) -> Node:
 
         # 데이터 artist
         for j, ln in enumerate(ax.lines):
+            f = fp.of_line(ln)
             axn.children.append(Node(
                 sel.seq(i, "lines", j), "line",
-                f"line{j} — {_label_of(ln, _t('(라벨 없음)'))}",
-                fingerprint=fp.of_line(ln), pickable=True))
+                _marked(f"line{j} — {_label_of(ln, _t('(라벨 없음)'))}",
+                        f["n"] == 0),
+                fingerprint=f, pickable=True))
 
         for j, cl in enumerate(ax.collections):
+            f = fp.of_collection(cl)
             axn.children.append(Node(
                 sel.seq(i, "collections", j), "coll",
-                f"coll{j} — {_label_of(cl, _t('(라벨 없음)'))}",
-                fingerprint=fp.of_collection(cl), pickable=True))
+                _marked(f"coll{j} — {_label_of(cl, _t('(라벨 없음)'))}",
+                        f["n"] == 0),
+                fingerprint=f, pickable=True))
 
         if ax.patches:
             grp = Node(f"{sel.axes(i)}.patches", "group",
