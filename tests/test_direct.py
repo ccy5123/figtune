@@ -15,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("PySide6")
+# PySide6 자체는 import되지만 QtWidgets는 libEGL 같은 시스템
+# 라이브러리를 요구한다. 없는 환경에서는 여기서 건너뛰어야 한다.
+pytest.importorskip("PySide6.QtWidgets")
 
 import matplotlib
 matplotlib.use("Agg")

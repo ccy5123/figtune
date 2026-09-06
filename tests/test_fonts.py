@@ -65,7 +65,7 @@ def test_sample_is_a_precomposed_syllable():
 
 def test_can_render_reports_a_bool(monkeypatch):
     """QApplication이 있어야만 의미가 있다. 없으면 Qt가 죽으므로 만들고 잰다."""
-    pytest.importorskip("PySide6")
+    pytest.importorskip("PySide6.QtWidgets")
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication

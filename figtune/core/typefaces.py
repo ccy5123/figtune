@@ -48,27 +48,40 @@ class Typeface:
 
 # --- 캐시 -----------------------------------------------------------------
 
+# 디스크에는 있는데 다시 만들어도 목록에 들어오지 않는 파일들. matplotlib이
+# 읽지 못하는 글꼴(손상됐거나 지원하지 않는 형식)이 그렇다. 기억해 두지 않으면
+# '모르는 글꼴이 있다'가 영원히 참이 되어 열 때마다 캐시를 다시 만든다.
+_UNREADABLE: set = set()
+
+
+def _on_disk() -> set:
+    try:
+        return set(fm.findSystemFonts())
+    except Exception:               # pragma: no cover - 환경 의존
+        return set()
+
+
 def cache_is_stale() -> bool:
     """디스크에는 있는데 matplotlib이 모르는 글꼴이 있는가.
 
     반대(캐시에만 있고 디스크에 없음)는 보지 않는다. 글꼴을 지운 경우인데,
     없는 글꼴을 목록에 하나 더 보여주는 것은 못 보여주는 것보다 덜 나쁘다.
     """
-    try:
-        on_disk = set(fm.findSystemFonts())
-    except Exception:               # pragma: no cover - 환경 의존
-        return False
     known = {f.fname for f in fm.fontManager.ttflist}
-    return bool(on_disk - known)
+    return bool(_on_disk() - known - _UNREADABLE)
 
 
 def rebuild() -> int:
     """캐시를 다시 만든다. 글꼴 파일 수를 돌려준다."""
+    disk = _on_disk()
     try:
         new = fm._load_fontmanager(try_read_cache=False)
     except Exception:               # pragma: no cover - 사설 API가 바뀌면
         return len(fm.fontManager.ttflist)
     fm.fontManager = new
+    # 다시 만들었는데도 안 들어온 것은 matplotlib이 못 읽는 파일이다.
+    # 다음부터는 '새 글꼴'로 치지 않는다.
+    _UNREADABLE.update(disk - {f.fname for f in new.ttflist})
     available.cache_clear()
     return len(new.ttflist)
 

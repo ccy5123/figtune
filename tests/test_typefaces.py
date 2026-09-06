@@ -223,3 +223,22 @@ def test_generic_can_be_the_default():
     T.set_default_family("serif")
     assert T.default_family() == "serif"
     T.set_default_family(None)
+
+
+def test_unreadable_font_files_do_not_force_a_rebuild(monkeypatch):
+    """다시 만들어도 목록에 안 들어오는 파일이 있으면 '새 글꼴이 있다'가
+    영원히 참이 되어, 열 때마다 캐시를 다시 만든다(148ms).
+
+    matplotlib이 못 읽는 글꼴(손상됐거나 지원하지 않는 형식)이 그렇다.
+    CI 러너에서 실제로 걸렸다.
+    """
+    from matplotlib import font_manager as fm
+
+    ghost = "/nonexistent/broken.ttf"
+    monkeypatch.setattr(T, "_on_disk",
+                        lambda: {f.fname for f in fm.fontManager.ttflist} | {ghost})
+    T._UNREADABLE.discard(ghost)
+    assert T.cache_is_stale() is True        # 처음에는 새 글꼴로 본다
+    T.rebuild()                              # 다시 만들어도 안 들어온다
+    assert T.cache_is_stale() is False, "매번 재생성하게 됩니다"
+    T._UNREADABLE.discard(ghost)

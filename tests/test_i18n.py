@@ -229,10 +229,15 @@ def test_locale_is_used_when_nothing_is_configured(monkeypatch):
 
 
 def test_unknown_locale_falls_back_to_source(monkeypatch):
+    import locale
+
     monkeypatch.delenv("FIGTUNE_LANG", raising=False)
     for var in ("LANGUAGE", "LC_ALL", "LC_MESSAGES"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("LANG", "fr_FR.UTF-8")
+    # getlocale()은 프로세스 시작 시점의 로케일을 들고 있어 환경변수를 지워도
+    # 남는다. 그대로 두면 러너의 로케일에 따라 결과가 달라진다.
+    monkeypatch.setattr(locale, "getlocale", lambda *a: (None, None))
     assert i18n.resolve_language() == i18n.SOURCE_LANG
 
 
