@@ -29,6 +29,7 @@ from pathlib import Path
 import yaml
 
 from ..core.spec import Spec
+from ..i18n import t as _t
 
 MARK_RE = re.compile(r"<figtune:(\d+)>([A-Za-z0-9+/=]+)</figtune>", re.S)
 PAYLOAD_VERSION = 1
@@ -87,12 +88,14 @@ def unpack(alt_text: str | None) -> Payload | None:
     if not m:
         return None
     if int(m.group(1)) > PAYLOAD_VERSION:
-        raise ValueError(
-            f"payload 버전 {m.group(1)}은 이 figtune보다 새롭습니다. 업데이트하세요.")
+        raise ValueError(_t(
+            "payload 버전 {v}은 이 figtune보다 새롭습니다. 업데이트하세요.",
+            v=m.group(1)))
     try:
         d = json.loads(zlib.decompress(base64.b64decode(m.group(2))).decode("utf-8"))
     except Exception as exc:
-        raise ValueError(f"figtune payload를 읽지 못했습니다: {exc}") from exc
+        raise ValueError(_t("figtune payload를 읽지 못했습니다: {err}",
+                            err=exc)) from exc
     return Payload(script=d["script"], spec=Spec.from_dict(yaml.safe_load(d["spec"])),
                    dpi=int(d.get("dpi", 300)),
                    vector=bool(d.get("vector", False)),
@@ -194,13 +197,13 @@ class RefreshResult:
             self.data_changes = {}
 
     def summary(self) -> str:
-        out = [f"갱신 {len(self.updated)}건"]
+        out = [_t("갱신 {n}건", n=len(self.updated))]
         if self.skipped:
-            out.append(f"건너뜀 {len(self.skipped)}건")
+            out.append(_t("건너뜀 {n}건", n=len(self.skipped)))
         n = sum(1 for d in self.data_changes.values()
                 if d["changed"] or d["added"] or d["removed"])
         if n:
-            out.append(f"데이터 변경 {n}건")
+            out.append(_t("데이터 변경 {n}건", n=n))
         return ", ".join(out)
 
 
@@ -223,7 +226,8 @@ def refresh_deck(pptx_path: Path | str, out_path: Path | str | None = None,
             label = f"slide {idx + 1} / {Path(payload.script).name}"
             script = payload.resolve_script(src)
             if not script.exists():
-                skipped.append((label, f"스크립트를 찾을 수 없음: {script}"))
+                skipped.append((label, _t("스크립트를 찾을 수 없음: {path}",
+                                          path=script)))
                 continue
             stem = Path(td) / f"fig_{idx}_{id(shape)}"
             svg = None
@@ -237,7 +241,7 @@ def refresh_deck(pptx_path: Path | str, out_path: Path | str | None = None,
                     _, diff = render(script, payload.spec, png,
                                      dpi=payload.dpi, python=python)
             except Exception as exc:
-                skipped.append((label, f"렌더 실패: {exc}"))
+                skipped.append((label, _t("렌더 실패: {err}", err=exc)))
                 continue
             changes[label] = diff
             if not check_only:

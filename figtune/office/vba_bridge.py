@@ -15,10 +15,13 @@ import sys
 from pathlib import Path
 
 from ..core.spec import Spec
+from ..i18n import init as _i18n_init
+from ..i18n import t as _t
 from . import pptx_link as PL
 
 
 def main(argv=None) -> int:
+    _i18n_init()
     ap = argparse.ArgumentParser(prog="figtune.office.vba_bridge")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -28,8 +31,9 @@ def main(argv=None) -> int:
     p.add_argument("--dpi", type=int, default=300)
     p.add_argument("--out", required=True)
 
-    u = sub.add_parser("unpack", help="alt text → spec / script 경로")
-    u.add_argument("--alt", required=True, help="alt text가 담긴 텍스트 파일")
+    u = sub.add_parser("unpack", help=_t("alt text → spec / script 경로"))
+    u.add_argument("--alt", required=True,
+                   help=_t("alt text가 담긴 텍스트 파일"))
     u.add_argument("--spec-out")
     u.add_argument("--script-out")
 
@@ -48,7 +52,7 @@ def main(argv=None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     if payload is None:
-        print("figtune 도형이 아닙니다.", file=sys.stderr)
+        print(_t("figtune 도형이 아닙니다."), file=sys.stderr)
         return 1
     if args.spec_out:
         payload.spec.dump(args.spec_out)

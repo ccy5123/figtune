@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..i18n import t as _t
+
 # 컨테이너 종류 → Axes 속성 이름
 _SEQ = {"line": "lines", "coll": "collections", "patch": "patches",
         # 사용자 스크립트가 ax.text()/annotate()로 만든 텍스트.
@@ -31,6 +33,25 @@ _SEQ = {"line": "lines", "coll": "collections", "patch": "patches",
         # 소유라 override만 걸고, 후자는 figtune 소유라 지울 수도 있다.
         "txt": "texts"}
 _SEQ_PREFIX = {v: k for k, v in _SEQ.items()}
+
+# selector 종류의 사람이 읽는 이름. 대화상자 탭과 트리가 함께 쓴다.
+# UI가 각자 표를 들면 판정과 화면이 어긋난다. 표시 시점에 번역된다.
+KIND_LABELS = {
+    "figure": "페이지",
+    "axes": "범위",
+    "tick": "눈금",
+    "spine": "축선",
+    "grid": "격자",
+    "legend": "범례",
+    "figlegend": "범례",
+    "text": "글자",
+    "figtext": "글자",
+    "usertext": "글자",
+    "txt": "글자",
+    "line": "선",
+    "coll": "점",
+    "patch": "도형",
+}
 
 _AX_RE = re.compile(r"^ax(\d+)$")
 _SEQ_RE = re.compile(r"^(line|coll|patch|txt)(\d+)$")
@@ -74,7 +95,7 @@ def parse(path: str) -> Selector:
     head, _, rest = path.partition(".")
     m = _AX_RE.match(head)
     if not m:
-        raise SelectorError(f"알 수 없는 selector: {path!r}")
+        raise SelectorError(_t("알 수 없는 selector: {path}", path=repr(path)))
     ax = int(m.group(1))
 
     if not rest:
@@ -104,7 +125,7 @@ def parse(path: str) -> Selector:
     if m:
         return Selector(path, "grid", axes=ax, name=m.group(1))
 
-    raise SelectorError(f"알 수 없는 selector: {path!r}")
+    raise SelectorError(_t("알 수 없는 selector: {path}", path=repr(path)))
 
 
 # --- 생성 헬퍼 -------------------------------------------------------------
@@ -161,21 +182,22 @@ def resolve(fig, path: str):
         if s.name == "suptitle":
             t = getattr(fig, "_suptitle", None)
             if t is None:
-                raise SelectorError("suptitle 없음")
+                raise SelectorError(_t("suptitle 없음"))
             return t
         try:
             return fig.texts[s.index]
         except IndexError as exc:
-            raise SelectorError(f"{path} 없음") from exc
+            raise SelectorError(_t("{path} 없음", path=path)) from exc
     if s.kind == "figlegend":
         if not getattr(fig, "legends", None):
-            raise SelectorError("figure 범례 없음")
+            raise SelectorError(_t("figure 범례 없음"))
         return fig.legends[0]
 
     try:
         ax = fig.axes[s.axes]
     except IndexError as exc:
-        raise SelectorError(f"axes[{s.axes}] 없음 ({path})") from exc
+        raise SelectorError(_t("axes[{i}] 없음 ({path})",
+                               i=s.axes, path=path)) from exc
 
     if s.kind in ("axes", "tick", "grid", "legend"):
         return ax
@@ -185,7 +207,8 @@ def resolve(fig, path: str):
         try:
             return container[s.index]
         except IndexError as exc:
-            raise SelectorError(f"{path} 없음 (개수 {len(container)})") from exc
+            raise SelectorError(_t("{path} 없음 (개수 {n})", path=path,
+                                  n=len(container))) from exc
 
     if s.kind == "text":
         return {"title": ax.title,
@@ -196,15 +219,15 @@ def resolve(fig, path: str):
         try:
             return ax.spines[s.name]
         except KeyError as exc:
-            raise SelectorError(f"spine {s.name!r} 없음") from exc
+            raise SelectorError(_t("spine {name} 없음", name=repr(s.name))) from exc
 
     if s.kind == "usertext":
         for t in ax.texts:
             if getattr(t, "_figtune_id", None) == s.name:
                 return t
-        raise SelectorError(f"user text {s.name!r} 없음")
+        raise SelectorError(_t("user text {name} 없음", name=repr(s.name)))
 
-    raise SelectorError(f"해석 불가: {path!r}")
+    raise SelectorError(_t("해석 불가: {path}", path=repr(path)))
 
 
 def code_expr(path: str) -> str:
@@ -228,4 +251,4 @@ def code_expr(path: str) -> str:
                 "ylabel": f"{var}.yaxis.label"}[s.name]
     if s.kind == "spine":
         return f"{var}.spines[{s.name!r}]"
-    raise SelectorError(f"코드 표현식 불가: {path!r}")
+    raise SelectorError(_t("코드 표현식 불가: {path}", path=repr(path)))

@@ -27,6 +27,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import t as _t
+
 SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 ET.register_namespace("", SVG_NS)
@@ -139,7 +141,7 @@ def fit_axes_size(fig, target_w_in: float, target_h_in: float,
     new_W = target_w_in + pad_l + pad_r
     new_H = target_h_in + pad_b + pad_t
     if new_W <= 0 or new_H <= 0:
-        raise ValueError("여백이 목표 크기보다 큽니다. target을 키우세요.")
+        raise ValueError(_t("여백이 목표 크기보다 큽니다. target을 키우세요."))
 
     fig.set_size_inches(new_W, new_H)
     ax.set_position([pad_l / new_W, pad_b / new_H,
@@ -163,7 +165,8 @@ def compose(panels: list[Panel], rows: int, cols: int,
     align="bbox"  — 이미지 경계 기준 단순 타일링
     """
     if len(panels) > rows * cols:
-        raise ValueError(f"패널 {len(panels)}개는 {rows}×{cols} 격자에 넘칩니다.")
+        raise ValueError(_t("패널 {n}개는 {rows}×{cols} 격자에 넘칩니다.",
+                            n=len(panels), rows=rows, cols=cols))
 
     prepared = []
     for i, p in enumerate(panels):
@@ -300,8 +303,8 @@ def to_png(svg_path: Path | str, png_path: Path | str, dpi: int = 300) -> Path:
     try:
         import cairosvg
     except ImportError as exc:                       # pragma: no cover
-        raise RuntimeError(
+        raise RuntimeError(_t(
             "SVG→PNG 변환에는 cairosvg가 필요합니다 (pip install cairosvg). "
-            "설치가 어려우면 벡터 없이 패널을 PNG로 합성하세요.") from exc
+            "설치가 어려우면 벡터 없이 패널을 PNG로 합성하세요.")) from exc
     cairosvg.svg2png(url=str(svg_path), write_to=str(png_path), dpi=dpi)
     return Path(png_path)

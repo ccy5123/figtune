@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..i18n import t as _t
 from . import fingerprint as fp
 from . import props as P
 from . import selector as sel
@@ -70,7 +71,7 @@ def build(fig) -> Node:
                            ("xlabel", ax.xaxis.label),
                            ("ylabel", ax.yaxis.label)):
             txt = art.get_text()
-            shown = txt if txt else "(비어 있음)"
+            shown = txt if txt else _t("(비어 있음)")
             axn.children.append(
                 Node(sel.text(i, which), "text", f"{which}: {shown}", pickable=True))
 
@@ -78,13 +79,13 @@ def build(fig) -> Node:
         for j, ln in enumerate(ax.lines):
             axn.children.append(Node(
                 sel.seq(i, "lines", j), "line",
-                f"line{j} — {_label_of(ln, '(라벨 없음)')}",
+                f"line{j} — {_label_of(ln, _t('(라벨 없음)'))}",
                 fingerprint=fp.of_line(ln), pickable=True))
 
         for j, cl in enumerate(ax.collections):
             axn.children.append(Node(
                 sel.seq(i, "collections", j), "coll",
-                f"coll{j} — {_label_of(cl, '(라벨 없음)')}",
+                f"coll{j} — {_label_of(cl, _t('(라벨 없음)'))}",
                 fingerprint=fp.of_collection(cl), pickable=True))
 
         if ax.patches:
@@ -131,7 +132,7 @@ def build(fig) -> Node:
             else:
                 axn.children.append(Node(
                     sel.seq(i, "texts", j), "txt",
-                    f"txt{j} — {t.get_text()[:24] or '(비어 있음)'}",
+                    f"txt{j} — {t.get_text()[:24] or _t('(비어 있음)')}",
                     fingerprint=fp.of_text(t), pickable=True))
 
     return root

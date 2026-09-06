@@ -15,6 +15,7 @@ import itertools
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import t as _t
 from . import props as P
 from .spec import Spec, UserText
 
@@ -107,7 +108,7 @@ def parse_source(src: str) -> ParseResult:
     fn = next((n for n in tree.body
                if isinstance(n, ast.FunctionDef) and n.name == "apply_style"), None)
     if fn is None:
-        return ParseResult(spec, ["apply_style 함수를 찾을 수 없음"])
+        return ParseResult(spec, [_t("apply_style 함수를 찾을 수 없음")])
 
     # 모듈 수준 RCPARAMS
     for n in tree.body:
@@ -116,7 +117,7 @@ def parse_source(src: str) -> ParseResult:
             try:
                 spec.rcparams = _lit(n.value) or {}
             except Exception:
-                un.append("RCPARAMS 해석 실패")
+                un.append(_t("RCPARAMS 해석 실패"))
 
     axvars: dict[str, int] = {}
     textvars: dict[str, str] = {}
@@ -184,16 +185,16 @@ def parse_source(src: str) -> ParseResult:
                         textvars[var] = real_id
                 continue
 
-            un.append(f"line {stmt.lineno}: 해석 못 한 대입문")
+            un.append(_t("line {n}: 해석 못 한 대입문", n=stmt.lineno))
             continue
 
         if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
-            un.append(f"line {stmt.lineno}: 단순 호출이 아닌 문장")
+            un.append(_t("line {n}: 단순 호출이 아닌 문장", n=stmt.lineno))
             continue
 
         ok = _parse_call(stmt.value, spec, axvars)
         if not ok:
-            un.append(f"line {stmt.lineno}: 해석 못 한 호출")
+            un.append(_t("line {n}: 해석 못 한 호출", n=stmt.lineno))
 
     from .canon import spec as _canon
     return ParseResult(_canon(spec), un)
@@ -238,6 +239,20 @@ def _parse_call(call: ast.Call, spec: Spec, axvars) -> bool:
             return False
         try:
             spec.set(base, "titlepad", _lit(call.args[1]))
+        except Exception:
+            return False
+        return True
+
+    # _title_pos(axN, x, y) — codegen이 내보내는 제목 위치 헬퍼
+    if isinstance(call.func, ast.Name) and call.func.id == "_title_pos":
+        if len(call.args) != 3:
+            return False
+        base = _target_path(call.args[0], axvars)
+        if base is None:
+            return False
+        try:
+            spec.set(f"{base}.title", "position",
+                     [float(_lit(call.args[1])), float(_lit(call.args[2]))])
         except Exception:
             return False
         return True
@@ -302,6 +317,17 @@ def _parse_call(call: ast.Call, spec: Spec, axvars) -> bool:
                 return False
             spec.set(f"{base[:-6]}.{axis}tick.{which}", "locator",
                      maker([_lit(a) for a in f.args] or [None]))
+            return True
+
+        # set_label_coords(x, y) — 축 라벨 위치. 인자가 둘이라 일반 분기가
+        # 삼키지 못하므로 먼저 본다.
+        if method == "set_label_coords" and base.endswith(("xaxis", "yaxis")):
+            vals = args()
+            if len(vals) != 2:
+                return False
+            which = "xlabel" if base.endswith("xaxis") else "ylabel"
+            spec.set(f"{base[:-6]}.{which}", "position",
+                     [float(vals[0]), float(vals[1])])
             return True
 
         # 일반 set_XXX

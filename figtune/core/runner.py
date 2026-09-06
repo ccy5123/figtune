@@ -17,6 +17,7 @@ from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
 
+from ..i18n import t as _t
 from . import provenance
 
 
@@ -169,7 +170,7 @@ def run_script_subprocess(path: str | Path, python: str | None = None,
             f"ns = runpy.run_path({str(p)!r})\n"
             "nums = plt.get_fignums()\n"
             "if not nums:\n"
-            "    raise SystemExit('figure 없음')\n"
+            "    raise SystemExit('no figure was created')\n"
             "fig = ns.get('fig')\n"
             "if fig is None or fig not in [plt.figure(n) for n in nums]:\n"
             "    fig = plt.figure(nums[0])\n"
@@ -183,22 +184,25 @@ def run_script_subprocess(path: str | Path, python: str | None = None,
                               capture_output=True, text=True,
                               cwd=str(p.parent), timeout=timeout)
         if proc.returncode != 0 or not pkl.exists():
-            raise RuntimeError(
-                f"사용자 인터프리터에서 스크립트 실행 실패:\n{proc.stderr[-2000:]}")
+            raise RuntimeError(_t(
+                "사용자 인터프리터에서 스크립트 실행 실패:\n{err}",
+                err=proc.stderr[-2000:]))
 
         meta_text = meta.read_text()
         child_mpl = json.loads(meta_text).get("mpl", "?")
         if child_mpl.split(".")[:2] != matplotlib.__version__.split(".")[:2]:
-            raise RuntimeError(
-                f"matplotlib 버전이 다릅니다 (스크립트 환경 {child_mpl}, "
-                f"figtune {matplotlib.__version__}). Figure pickle은 버전에 "
-                f"결합되어 있어 안전하게 주고받을 수 없습니다. figtune을 같은 "
-                f"환경에 설치하거나 인프로세스 모드를 쓰세요.")
+            raise RuntimeError(_t(
+                "matplotlib 버전이 다릅니다 (스크립트 환경 {child}, "
+                "figtune {ours}). Figure pickle은 버전에 결합되어 있어 "
+                "안전하게 주고받을 수 없습니다. figtune을 같은 환경에 "
+                "설치하거나 인프로세스 모드를 쓰세요.",
+                child=child_mpl, ours=matplotlib.__version__))
 
         try:
             fig = pickle.loads(pkl.read_bytes())
         except Exception as exc:
-            raise RuntimeError(f"Figure를 옮겨오지 못했습니다: {exc}") from exc
+            raise RuntimeError(_t("Figure를 옮겨오지 못했습니다: {err}",
+                                  err=exc)) from exc
 
     meta_d = json.loads(meta_text)
     sources = provenance.collect_from(meta_d.get("opened", []), [p.parent],

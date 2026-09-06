@@ -39,6 +39,8 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..i18n import t as _t
+
 # plot(ax) 안으로 옮길 때 버려도 되는 figure 수준 호출.
 # 병합 스크립트가 대신 처리하거나, 단독 실행 블록으로 옮긴다.
 _FIG_DROPPABLE = {"tight_layout", "savefig", "show", "set_size_inches",
@@ -166,8 +168,9 @@ class Report:
 
     def explain(self) -> str:
         if self.ok:
-            return "정규형으로 바꿀 수 있습니다."
-        return "정규형으로 바꿀 수 없습니다:\n  " + "\n  ".join(self.reasons)
+            return _t("정규형으로 바꿀 수 있습니다.")
+        return _t("정규형으로 바꿀 수 없습니다:\n  {reasons}",
+                  reasons="\n  ".join(self.reasons))
 
 
 def _is_subplots(node) -> bool:
@@ -213,33 +216,33 @@ def analyze(source: str) -> Report:
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
-        return Report(False, [f"구문 오류: {exc}"])
+        return Report(False, [_t("구문 오류: {err}", err=exc)])
 
     # 이미 정규형인가
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             args = [a.arg for a in node.args.args]
             if args and args[0] in ("ax", "axes", "axis"):
-                return Report(True, ["이미 정규형입니다."], n_plot_stmts=0)
+                return Report(True, [_t("이미 정규형입니다.")], n_plot_stmts=0)
 
     subplots = [(i, n) for i, n in enumerate(tree.body)
                 if isinstance(n, ast.Assign) and _is_subplots(n.value)]
     if len(subplots) != 1:
-        return Report(False, [
-            f"모듈 수준 plt.subplots() 호출이 {len(subplots)}개입니다. "
-            "정확히 하나여야 합니다."])
+        return Report(False, [_t(
+            "모듈 수준 plt.subplots() 호출이 {n}개입니다. "
+            "정확히 하나여야 합니다.", n=len(subplots))])
 
     idx, assign = subplots[0]
     call = assign.value
     if not _single_axes(call):
-        return Report(False, [
+        return Report(False, [_t(
             "subplots()가 여러 축을 만듭니다. 이미 다패널 figure이므로 "
-            "병합 대상이 아닙니다."])
+            "병합 대상이 아닙니다.")])
 
     tgt = assign.targets[0]
     if not (isinstance(tgt, ast.Tuple) and len(tgt.elts) == 2
             and all(isinstance(e, ast.Name) for e in tgt.elts)):
-        return Report(False, ["`fig, ax = plt.subplots(...)` 형태가 아닙니다."])
+        return Report(False, [_t("`fig, ax = plt.subplots(...)` 형태가 아닙니다.")])
     fig_name, ax_name = tgt.elts[0].id, tgt.elts[1].id
 
     reasons, n_stmts = [], 0
@@ -251,24 +254,27 @@ def analyze(source: str) -> Report:
             n_stmts += 1
         elif verdict == "refuse-plt":
             attr = _plt_call(node)
-            reasons.append(
-                f"{node.lineno}행: pyplot 상태 호출 plt.{attr}()은 어느 축을 "
-                f"가리키는지 알 수 없습니다. ax.{attr}(...) 형태로 바꾸세요.")
+            reasons.append(_t(
+                "{line}행: pyplot 상태 호출 plt.{attr}()은 어느 축을 "
+                "가리키는지 알 수 없습니다. ax.{attr}(...) 형태로 바꾸세요.",
+                line=node.lineno, attr=attr))
         elif verdict == "refuse-fig":
             attr = getattr(getattr(getattr(node, "value", None), "func", None),
                            "attr", None)
-            reasons.append(
-                f"{node.lineno}행: figure 수준 호출 {attr!r}은 옮길 수 "
-                "없습니다. 손으로 처리하세요.")
+            reasons.append(_t(
+                "{line}행: figure 수준 호출 {attr}은 옮길 수 "
+                "없습니다. 손으로 처리하세요.",
+                line=node.lineno, attr=repr(attr)))
         elif verdict == "refuse-stmt":
-            reasons.append(
-                f"{node.lineno}행: 그리기 대상을 쓰는 문장이 단순 호출이나 "
-                "대입이 아닙니다 (조건문·반복문은 자동 변환하지 않습니다).")
+            reasons.append(_t(
+                "{line}행: 그리기 대상을 쓰는 문장이 단순 호출이나 "
+                "대입이 아닙니다 (조건문·반복문은 자동 변환하지 않습니다).",
+                line=node.lineno))
         elif verdict == "refuse-leak":
-            reasons.append(
-                f"{node.lineno}행: 그리기 대상을 그리기 외 용도로 씁니다"
+            reasons.append(_t(
+                "{line}행: 그리기 대상을 그리기 외 용도로 씁니다"
                 "(출력·계산 등). 함수 안으로 옮기면 실행 시점이 달라지므로 "
-                "손으로 처리하세요.")
+                "손으로 처리하세요.", line=node.lineno))
 
     # 함수 안으로 옮긴 이름을 모듈 수준에서 쓰면 NameError가 난다.
     # 옮기고 나서 터지는 것보다 옮기기 전에 막는 편이 낫다.
@@ -277,14 +283,15 @@ def analyze(source: str) -> Report:
             continue
         leaked = bound & _names_used(node)
         if leaked:
-            reasons.append(
-                f"{node.lineno}행: {', '.join(sorted(leaked))}은(는) plot(ax) "
-                "안으로 옮겨지는데 이 문장이 모듈 수준에서 씁니다.")
+            reasons.append(_t(
+                "{line}행: {names}은(는) plot(ax) "
+                "안으로 옮겨지는데 이 문장이 모듈 수준에서 씁니다.",
+                line=node.lineno, names=", ".join(sorted(leaked))))
 
     if n_stmts == 0 and not reasons:
-        reasons.append("그리기 문장을 찾지 못했습니다.")
+        reasons.append(_t("그리기 문장을 찾지 못했습니다."))
 
-    return Report(not reasons, reasons or ["변환 가능합니다."],
+    return Report(not reasons, reasons or [_t("변환 가능합니다.")],
                   ax_name=ax_name, fig_name=fig_name,
                   figsize=_figsize_src(call, source), n_plot_stmts=n_stmts)
 
