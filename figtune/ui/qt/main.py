@@ -445,6 +445,16 @@ class Canvas(FigureCanvasQTAgg):
             # 모자란 채로 수렴한 것처럼 보인다.
             self.win.canvas_frame.fit()
             self.draw()
+        else:
+            # 정해진 횟수를 다 쓰고도 남았다 — 진동하거나 아주 느리게 수렴하는
+            # 경우다. 종이가 몇 mm 모자란 채 남고 글자가 잘릴 수 있다.
+            # 조용히 끝내면 사용자는 이것이 최종 상태인지 도구가 포기한
+            # 상태인지 구분할 수 없다.
+            if layout.fit_to_content(self.figure) is not None:
+                self.win.status(_t(
+                    "종이를 내용에 맞추지 못했습니다 ({n}번 시도). "
+                    "글자가 잘려 보이면 크기를 직접 조절하세요.",
+                    n=self.GROW_PASSES))
         return out
 
 

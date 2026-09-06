@@ -858,3 +858,39 @@ def test_paper_can_shrink_below_the_original(win):
     drag(win.canvas, x, y, x, y - 40)
     win.canvas.draw()
     assert round(fig.get_size_inches()[1], 2) < start
+
+
+def test_unconverged_growth_is_reported(win, monkeypatch):
+    """3번 안에 수렴하지 못하면 종이가 몇 mm 모자란 채 남는다.
+
+    조용히 끝내면 사용자는 그것이 최종 상태인지 도구가 포기한 상태인지
+    구분할 수 없다. 잘린 글자를 보고도 원인을 짚을 방법이 없다.
+    """
+    seen = []
+    monkeypatch.setattr(type(win), "status",
+                        lambda self, msg: seen.append(msg))
+    monkeypatch.setattr(type(win.canvas), "GROW_PASSES", 0)
+
+    fig = win.session.fig
+    win.select("ax1")
+    bb = fig.axes[1].get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 + 300, (bb.y0 + bb.y1) / 2)
+
+    assert any("종이" in m for m in seen), \
+        f"수렴 실패를 알리지 않았습니다: {seen}"
+
+
+def test_converged_growth_is_silent(win, monkeypatch):
+    """맞춰졌으면 아무 말도 하지 않아야 한다. 늘 경고하면 경고가 안 읽힌다."""
+    seen = []
+    monkeypatch.setattr(type(win), "status",
+                        lambda self, msg: seen.append(msg))
+
+    fig = win.session.fig
+    win.select("ax1")
+    bb = fig.axes[1].get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 + 60, (bb.y0 + bb.y1) / 2)
+
+    assert not any("맞추지 못했습니다" in m for m in seen), seen
