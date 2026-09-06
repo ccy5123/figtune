@@ -133,8 +133,41 @@ def run_script(path: str | Path, close_existing: bool = True) -> RunResult:
     return RunResult(figures=figs, namespace=ns, data_sources=sources)
 
 
+def child_source(script: Path, pkl: Path, meta: Path,
+                 rcparams: dict | None = None) -> str:
+    """자식 프로세스 부트스트랩 코드.
+
+    rcParams는 프로세스 경계를 넘지 않는다. 부모가 얹은 기본 글꼴을 여기서
+    다시 얹지 않으면, 같은 설정으로 연 같은 스크립트가 실행 모드에 따라 다른
+    글꼴로 나온다. artist가 만들어진 뒤에는 소급되지 않으므로 스크립트보다
+    먼저 얹어야 한다.
+    """
+    font = f"matplotlib.rcParams.update({dict(rcparams)!r})\n" if rcparams else ""
+    return (
+        provenance.CHILD_SNIPPET +
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt, pickle, json, runpy\n"
+        "from matplotlib.figure import Figure\n"
+        + font +
+        "plt.show = lambda *a, **k: None\n"
+        "Figure.savefig = lambda self, *a, **k: None\n"
+        f"ns = runpy.run_path({str(script)!r})\n"
+        "nums = plt.get_fignums()\n"
+        "if not nums:\n"
+        "    raise SystemExit('no figure was created')\n"
+        "fig = ns.get('fig')\n"
+        "if fig is None or fig not in [plt.figure(n) for n in nums]:\n"
+        "    fig = plt.figure(nums[0])\n"
+        f"pickle.dump(fig, open({str(pkl)!r}, 'wb'))\n"
+        "json.dump({'mpl': matplotlib.__version__, "
+        "'opened': _figtune_opened}, "
+        f"open({str(meta)!r}, 'w'))\n")
+
+
 def run_script_subprocess(path: str | Path, python: str | None = None,
-                          timeout: int = 120) -> RunResult:
+                          timeout: int = 120,
+                          rcparams: dict | None = None) -> RunResult:
     """사용자 인터프리터에서 스크립트를 돌리고 Figure만 받아온다.
 
     figtune이 얼려진(frozen) 앱이거나 별도 환경에 설치된 경우, 인프로세스
@@ -160,25 +193,7 @@ def run_script_subprocess(path: str | Path, python: str | None = None,
         td = Path(td)
         pkl, meta = td / "fig.pkl", td / "meta.json"
         (td / "_child.py").write_text(
-            provenance.CHILD_SNIPPET +
-            "import matplotlib\n"
-            "matplotlib.use('Agg')\n"
-            "import matplotlib.pyplot as plt, pickle, json, runpy\n"
-            "from matplotlib.figure import Figure\n"
-            "plt.show = lambda *a, **k: None\n"
-            "Figure.savefig = lambda self, *a, **k: None\n"
-            f"ns = runpy.run_path({str(p)!r})\n"
-            "nums = plt.get_fignums()\n"
-            "if not nums:\n"
-            "    raise SystemExit('no figure was created')\n"
-            "fig = ns.get('fig')\n"
-            "if fig is None or fig not in [plt.figure(n) for n in nums]:\n"
-            "    fig = plt.figure(nums[0])\n"
-            f"pickle.dump(fig, open({str(pkl)!r}, 'wb'))\n"
-            "json.dump({'mpl': matplotlib.__version__, "
-            "'opened': _figtune_opened}, "
-            f"open({str(meta)!r}, 'w'))\n",
-            encoding="utf-8")
+            child_source(p, pkl, meta, rcparams), encoding="utf-8")
 
         proc = subprocess.run([python, str(td / "_child.py")],
                               capture_output=True, text=True,

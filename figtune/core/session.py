@@ -175,7 +175,11 @@ class Session:
 
     def _run(self):
         if self.python:
-            return runner.run_script_subprocess(self.script, python=self.python)
+            # 기본 글꼴은 프로세스 경계를 넘지 않는다. 함께 건네야 인프로세스
+            # 모드와 같은 그림이 나온다.
+            return runner.run_script_subprocess(
+                self.script, python=self.python,
+                rcparams=getattr(self, "_font_defaults", None))
         return runner.run_script(self.script)
 
     def refresh_tree(self) -> None:

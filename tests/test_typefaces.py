@@ -193,6 +193,43 @@ def test_default_font_reaches_the_figure_and_the_spec(tmp_path):
         T.set_default_family(None)
 
 
+def test_default_font_reaches_the_subprocess_figure(tmp_path):
+    """--python 모드에서도 기본 글꼴이 적용되어야 한다.
+
+    인프로세스 rcParams는 자식 프로세스에 상속되지 않는다. 자식에서 얹지
+    않으면 같은 설정으로 같은 스크립트를 열었는데 실행 모드에 따라 다른
+    글꼴이 나온다 — 사용자가 원인을 짚을 수 없는 종류의 차이다.
+    """
+    import shutil
+    import sys
+
+    import matplotlib
+    matplotlib.use("Agg")
+    from figtune.core.session import Session
+
+    pick = next(f.name for f in T.available() if f.bundled)
+    T.set_default_family(pick)
+
+    script = tmp_path / "p.py"
+    shutil.copy(Path(__file__).resolve().parent.parent
+                / "examples" / "plot_fig3.py", script)
+    s = Session(python=sys.executable)
+    s.open(script)
+    try:
+        assert s.spec.rcparams.get("font.family") == pick
+        assert s.fig.axes[0].title.get_fontfamily()[0] == pick
+    finally:
+        T.set_default_family(None)
+
+
+def test_child_bootstrap_carries_no_rcparams_when_unset():
+    """기본 글꼴 지정이 없으면 자식 부트스트랩을 건드리지 않는다."""
+    from figtune.core import runner
+
+    src = runner.child_source(Path("p.py"), Path("f.pkl"), Path("m.json"), {})
+    assert "rcParams.update" not in src
+
+
 def test_open_repairs_a_stale_font_cache(tmp_path, monkeypatch):
     """캐시가 낡은 채로 열리면 목록에 새 글꼴이 없다."""
     import shutil
