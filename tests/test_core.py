@@ -347,3 +347,90 @@ def test_data_change_is_distinguished_from_code_change(tmp_path):
     rep2 = Session().open(script)
     assert not rep2.data_changed["changed"]
     assert rep2.stale, "코드 변경이 지문으로 잡히지 않음"
+
+
+# --- 실행 취소 경계 ---------------------------------------------------------
+
+def test_consecutive_edits_to_one_property_collapse():
+    """슬라이더를 끄는 동안 수백 칸이 쌓이면 실행 취소가 쓸모없어진다."""
+    from figtune.core.history import Command, History
+
+    h = History(lambda *a: None)
+    h.push(Command("ax0.title", "fontsize", 10, 11))
+    h.push(Command("ax0.title", "fontsize", 11, 12))
+    assert len(h) == 1 and h._undo[0].new == 12
+
+
+def test_seal_starts_a_new_undo_step():
+    """끌기 하나가 한 칸이다. 경계가 없으면 두 번의 끌기가 한 칸이 된다."""
+    from figtune.core.history import Command, History
+
+    h = History(lambda *a: None)
+    h.push(Command("ax0.title", "position", None, [0.6, 1.0]))
+    h.seal()
+    h.push(Command("ax0.title", "position", [0.6, 1.0], [0.7, 1.0]))
+    assert len(h) == 2
+    assert [c.new for c in h._undo] == [[0.6, 1.0], [0.7, 1.0]]
+
+
+def test_seal_does_not_leave_a_dead_step():
+    """경계 표식을 스택에 넣으면 실행 취소가 헛걸음을 한다."""
+    from figtune.core.history import Command, History
+
+    seen = []
+    h = History(lambda p, n, v: seen.append((p, n, v)))
+    h.push(Command("ax0.title", "position", None, [0.6, 1.0]))
+    h.seal()
+    h.push(Command("ax0.title", "position", [0.6, 1.0], [0.7, 1.0]))
+    h.undo()
+    assert seen == [("ax0.title", "position", [0.6, 1.0])]
+
+
+def test_seal_only_affects_the_next_push():
+    from figtune.core.history import Command, History
+
+    h = History(lambda *a: None)
+    h.seal()
+    h.push(Command("ax0", "xlim", None, [0, 1]))
+    h.push(Command("ax0", "xlim", [0, 1], [0, 2]))
+    assert len(h) == 1          # 경계는 한 번만 작동한다
+
+
+def test_command_extra_is_undone_with_its_parent():
+    """범례 끌기는 앵커와 loc을 함께 확정한다. 둘이 한 칸이어야 한다."""
+    from figtune.core.history import Command, History
+
+    seen = []
+    h = History(lambda p, n, v: seen.append((p, n, v)))
+    h.push(Command("ax0.legend", "bbox_to_anchor", None, [0.5, 0.5],
+                   extra=[Command("ax0.legend", "loc", None, "upper left")]))
+    assert len(h) == 1
+    h.undo()
+    assert seen == [("ax0.legend", "loc", None),
+                    ("ax0.legend", "bbox_to_anchor", None)]
+
+
+def test_command_extra_is_redone_in_order():
+    from figtune.core.history import Command, History
+
+    seen = []
+    h = History(lambda p, n, v: seen.append((p, n, v)))
+    h.push(Command("ax0.legend", "bbox_to_anchor", None, [0.5, 0.5],
+                   extra=[Command("ax0.legend", "loc", None, "upper left")]))
+    h.undo()
+    seen.clear()
+    h.redo()
+    # loc이 먼저 정해져야 앵커가 뜻을 갖는다
+    assert seen == [("ax0.legend", "loc", "upper left"),
+                    ("ax0.legend", "bbox_to_anchor", [0.5, 0.5])]
+
+
+def test_commands_with_extras_never_collapse():
+    """합쳐지면 딸린 변경 하나가 조용히 사라진다."""
+    from figtune.core.history import Command, History
+
+    h = History(lambda *a: None)
+    for anchor in ([0.4, 0.4], [0.6, 0.6]):
+        h.push(Command("ax0.legend", "bbox_to_anchor", None, anchor,
+                       extra=[Command("ax0.legend", "loc", None, "upper left")]))
+    assert len(h) == 2

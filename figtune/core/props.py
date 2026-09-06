@@ -23,7 +23,7 @@ from . import selector as sel
 @dataclass(frozen=True)
 class Prop:
     name: str
-    kind: str                      # color|float|int|str|bool|choice|tuple2|locator|strlist
+    kind: str                      # color|float|int|str|bool|choice|tuple2|tuple4|locator|strlist|font
     label: str = ""                # GUI 표시명
     choices: tuple = ()
     lo: float | None = None
@@ -57,6 +57,9 @@ REGISTRY: dict[str, list[Prop]] = {
         P("facecolor", "color", "배경색"),
     ],
     "axes": [
+        # 축 상자. 캔버스에서 모서리를 끌어 바꾼다. tight_layout이 켜져 있으면
+        # 원본이 다시 계산하므로 apply_style이 나중에 덮어써야 이긴다.
+        P("position", "tuple4", "축 상자", lo=0, hi=1, step=0.01),
         P("xlim", "tuple2", "x 범위"),
         P("ylim", "tuple2", "y 범위"),
         P("xscale", "choice", "x 스케일", choices=("linear", "log", "symlog")),
@@ -74,9 +77,10 @@ REGISTRY: dict[str, list[Prop]] = {
     ],
     "text": [
         P("text", "str", "내용"),
+        P("position", "tuple2", "위치", step=0.01),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
-        P("fontfamily", "str", "글꼴"),
+        P("fontfamily", "font", "글꼴"),
         P("fontweight", "choice", "굵기", choices=FONT_WEIGHTS),
         P("fontstyle", "choice", "기울임", choices=FONT_STYLES),
         P("rotation", "float", "회전", lo=-180, hi=180, step=1),
@@ -97,7 +101,7 @@ REGISTRY: dict[str, list[Prop]] = {
         P("position", "tuple2", "위치"),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
-        P("fontfamily", "str", "글꼴"),
+        P("fontfamily", "font", "글꼴"),
         P("fontweight", "choice", "굵기", choices=FONT_WEIGHTS),
         P("fontstyle", "choice", "기울임", choices=FONT_STYLES),
         P("horizontalalignment", "choice", "가로 정렬", choices=HA),
@@ -109,7 +113,7 @@ REGISTRY: dict[str, list[Prop]] = {
         P("position", "tuple2", "위치"),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
-        P("fontfamily", "str", "글꼴"),
+        P("fontfamily", "font", "글꼴"),
         P("fontweight", "choice", "굵기", choices=FONT_WEIGHTS),
         P("fontstyle", "choice", "기울임", choices=FONT_STYLES),
         P("rotation", "float", "회전", lo=-180, hi=180, step=1),
@@ -123,7 +127,7 @@ REGISTRY: dict[str, list[Prop]] = {
         P("position", "tuple2", "위치"),
         P("fontsize", "float", "크기", lo=1, hi=72, step=0.5),
         P("color", "color", "색"),
-        P("fontfamily", "str", "글꼴"),
+        P("fontfamily", "font", "글꼴"),
         P("fontweight", "choice", "굵기", choices=FONT_WEIGHTS),
         P("fontstyle", "choice", "기울임", choices=FONT_STYLES),
         P("rotation", "float", "회전", lo=-180, hi=180, step=1),
@@ -205,8 +209,37 @@ REGISTRY: dict[str, list[Prop]] = {
 COLOR_PROPS = {p.name for props in REGISTRY.values() for p in props if p.kind == "color"}
 
 
+# 미니 툴바에 올릴 속성. 대상마다 서너 개만 두고 나머지는 대화상자로 보낸다.
+# 여기에 다 넣으면 툴바가 대화상자가 되어 존재 이유가 없어진다.
+#
+# 레지스트리를 복제하지 않고 이름만 가리킨다 — props.REGISTRY가 단일 참조점이라는
+# 원칙을 지키려는 것이다. 이름이 어긋나면 test_props_position이 잡는다.
+PRIMARY: dict[str, tuple[str, ...]] = {
+    "figure": ("size_inches", "facecolor"),
+    "axes": ("xlim", "ylim"),
+    "text": ("fontsize", "color", "fontweight", "fontstyle"),
+    "figtext": ("fontsize", "color", "fontweight"),
+    "txt": ("fontsize", "color", "fontweight"),
+    "usertext": ("fontsize", "color", "fontweight", "rotation"),
+    "line": ("color", "linewidth", "linestyle", "marker", "markersize"),
+    "coll": ("facecolor", "edgecolor", "alpha", "sizes"),
+    "patch": ("facecolor", "edgecolor", "alpha"),
+    "spine": ("visible", "linewidth", "color"),
+    "tick": ("direction", "length", "width", "labelsize"),
+    "grid": ("visible", "linestyle", "color", "alpha"),
+    "legend": ("visible", "loc", "frameon", "fontsize"),
+    "figlegend": ("visible", "loc", "frameon"),
+}
+
+
 def props_for(kind: str) -> list[Prop]:
     return REGISTRY.get(kind, [])
+
+
+def primary_props(kind: str) -> list[Prop]:
+    """미니 툴바용 축약 목록. 순서는 PRIMARY에 적은 대로."""
+    by_name = {p.name: p for p in REGISTRY.get(kind, [])}
+    return [by_name[n] for n in PRIMARY.get(kind, ()) if n in by_name]
 
 
 def is_3d(fig, path: str) -> bool:
@@ -284,6 +317,11 @@ def normalize(kind: str, name: str, value: Any) -> Any:
         try:
             return [float(value[0]), float(value[1])]
         except (TypeError, ValueError, IndexError):
+            return None
+    if p.kind == "tuple4":
+        try:
+            return [float(v) for v in tuple(value)[:4]]
+        except (TypeError, ValueError):
             return None
     if p.kind in ("float",):
         try:
@@ -373,6 +411,8 @@ def locator_code(d: dict | None) -> str | None:
 # --- 축 레벨 특수 프로퍼티 ------------------------------------------------
 
 def _axes_get(ax, name):
+    if name == "position":
+        return list(ax.get_position().bounds)
     if name in ("elev", "azim", "roll"):
         return getattr(ax, name, None)
     if name == "dist_zoom":
@@ -411,6 +451,9 @@ def set_title_pad(ax, pad) -> None:
 
 
 def _axes_set(ax, name, value):
+    if name == "position":
+        ax.set_position([float(v) for v in value])
+        return
     if name == "titlepad":
         set_title_pad(ax, value)
         return
@@ -429,6 +472,67 @@ def _axes_code(var, name, value):
     if name in ("xlabelpad", "ylabelpad"):
         return f"{var}.{name[0]}axis.labelpad = {value!r}"
     return f"{var}.set_{name}({value!r})"
+
+
+# --- 제목 · 축라벨 위치 -----------------------------------------------------
+#
+# 셋의 API가 다르다. 제목은 Text.set_position()이 축 좌표로 먹지만, 축 라벨은
+# Axis.set_label_coords()를 써야 한다. label.set_position()을 그냥 쓰면 축
+# 좌표가 아니라 포인트 오프셋을 건드려 뜻이 달라진다.
+
+def _text_position_set(ax, which, value):
+    x, y = float(value[0]), float(value[1])
+    if which == "title":
+        set_title_position(ax, x, y)
+    elif which == "xlabel":
+        ax.xaxis.set_label_coords(x, y)
+    else:
+        ax.yaxis.set_label_coords(x, y)
+
+
+def _text_position_code(var, which, value):
+    x, y = float(value[0]), float(value[1])
+    if which == "title":
+        return f"_title_pos({var}, {x!r}, {y!r})"
+    axis = "xaxis" if which == "xlabel" else "yaxis"
+    return f"{var}.{axis}.set_label_coords({x!r}, {y!r})"
+
+
+def set_title_position(ax, x, y) -> None:
+    """제목을 옮긴다. 가로만 옮기면 세로는 다음 그리기에 되돌아간다.
+
+    matplotlib은 그릴 때마다 _update_title_position()으로 제목의 y를 다시
+    계산해 축 위 여백에 맞춘다. 사용자가 올린 값은 그 계산에 지워진다.
+    _autotitlepos를 내려야 자동 배치가 멈춘다 — set_title(y=)이 내부에서
+    하는 일과 같지만, set_title은 폰트 속성을 초기화하므로 쓸 수 없다.
+    """
+    ax.title.set_position((float(x), float(y)))
+    try:
+        ax._autotitlepos = False
+    except AttributeError:                      # pragma: no cover - 구버전 대비
+        pass
+
+
+def _text_position_get(ax, which):
+    """현재 위치를 축 좌표로 읽는다. 읽을 수 없으면 None.
+
+    set_label_coords를 한 번도 부르지 않았으면 label.get_position()이 축
+    좌표가 아니라 포인트 오프셋을 돌려준다. 그 값을 그대로 보여주면 사용자가
+    끌지도 않았는데 엉뚱한 숫자가 뜬다. 그려진 자리에서 역산한다.
+    """
+    if which == "title":
+        return list(ax.title.get_position())
+    axis = ax.xaxis if which == "xlabel" else ax.yaxis
+    art = axis.label
+    if art.get_transform() is ax.transAxes:
+        return list(art.get_position())
+    try:
+        bb = art.get_window_extent(ax.figure.canvas.get_renderer())
+        x, y = ax.transAxes.inverted().transform(
+            ((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2))
+    except Exception:
+        return None
+    return [round(float(x), 4), round(float(y), 4)]
 
 
 # --- spine 특수 ------------------------------------------------------------
@@ -498,6 +602,9 @@ def get(fig, path: str, name: str) -> Any:
             return _grid_get(fig.axes[s.axes], s.name, name)
         if s.kind == "legend":
             return _legend_get(fig.axes[s.axes], name)
+        if s.kind == "text" and name == "position":
+            return normalize(s.kind, name,
+                             _text_position_get(fig.axes[s.axes], s.name))
         obj = sel.resolve(fig, path)
         if s.kind == "axes":
             raw = _axes_get(obj, name)
@@ -524,6 +631,9 @@ def apply(fig, path: str, name: str, value: Any) -> None:
         return
     if s.kind == "legend":
         _legend_set(fig.axes[s.axes], name, value)
+        return
+    if s.kind == "text" and name == "position":
+        _text_position_set(fig.axes[s.axes], s.name, value)
         return
     if s.kind == "figure" and name == "dpi":
         # dpi는 '출력 해상도'다. 화면 표시 배율(display dpi)과 물리적으로 같은
@@ -555,6 +665,8 @@ def emit(path: str, name: str, value: Any) -> str:
         return _grid_code(f"ax{s.axes}", s.name, name, value)
     if s.kind == "legend":
         return _legend_code(f"ax{s.axes}", name, value)
+    if s.kind == "text" and name == "position":
+        return _text_position_code(f"ax{s.axes}", s.name, value)
     var = sel.code_expr(path)
     if s.kind == "axes":
         if name in _VIEW_KEYS or name == "dist_zoom":

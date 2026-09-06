@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..i18n import t as _t
 from . import apply as ap
 from . import canon
 from . import codegen
@@ -18,6 +19,7 @@ from . import parse as parsemod
 from . import props as P
 from . import runner
 from . import selector as sel
+from . import typefaces
 from .history import Command, History
 from .spec import Spec, UserText
 
@@ -80,9 +82,19 @@ class Session:
         self.script = Path(script_path).resolve()
         rep = LoadReport()
 
+        # 글꼴을 새로 깔아도 matplotlib은 자기 캐시를 갱신하지 않는다. 여기서
+        # 잡지 않으면 '분명 깔았는데 목록에 없다'로 막힌다.
+        typefaces.ensure_fresh()
+        # 기본 글꼴은 스크립트가 돌기 전에 얹어야 한다. rcParams는 이미
+        # 만들어진 artist에 소급되지 않는다.
+        self._font_defaults = typefaces.default_rcparams()
+        if self._font_defaults:
+            import matplotlib as mpl
+            mpl.rcParams.update(self._font_defaults)
+
         result = self._run()
         if not result.figures:
-            raise RuntimeError("스크립트가 figure를 만들지 않았습니다.")
+            raise RuntimeError(_t("스크립트가 figure를 만들지 않았습니다."))
         self.fig = result.figure
 
         self._last_sources = result.data_sources
@@ -129,6 +141,9 @@ class Session:
         if self.spec.fingerprints:
             rep.stale = introspect.check_stale(self.fig, self.spec.fingerprints)
 
+        for key, value in getattr(self, "_font_defaults", {}).items():
+            self.spec.rcparams.setdefault(key, value)
+
         report = ap.apply_spec(self.fig, self.spec)
         rep.apply_failures = report.failed
         rep.data_changed = self.data_changes()
@@ -149,7 +164,7 @@ class Session:
         rep = LoadReport()
         result = self._run()
         if not result.figures:
-            raise RuntimeError("스크립트가 figure를 만들지 않았습니다.")
+            raise RuntimeError(_t("스크립트가 figure를 만들지 않았습니다."))
         self.fig = result.figure
         self.spec = keep
         if self.spec.fingerprints:
@@ -267,7 +282,9 @@ class Session:
 
     # --- user text -------------------------------------------------------
 
-    def add_text(self, axes_index: int, text: str = "텍스트",
+    # 기본값은 번역하지 않는다. spec과 생성 코드에 그대로 실려 그림에 찍히므로,
+    # 언어에 따라 달라지면 같은 spec이 사람마다 다른 그림을 낸다.
+    def add_text(self, axes_index: int, text: str = "text",
                  position=(0.5, 0.5), coords: str = "axes") -> str:
         tid = self.spec.new_text_id()
         self.spec.texts.append(UserText(id=tid, axes=axes_index, text=text,
@@ -358,7 +375,7 @@ class Session:
 
     def save(self, install_hook: bool = False) -> dict:
         if not self.script:
-            raise RuntimeError("열린 스크립트가 없습니다.")
+            raise RuntimeError(_t("열린 스크립트가 없습니다."))
         self.spec.fingerprints = introspect.fingerprints(self.fig)
         self.spec.data_sources = [d.to_dict() for d in self._last_sources]
         self.spec = canon.spec(self.spec)
