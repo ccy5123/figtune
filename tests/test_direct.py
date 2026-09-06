@@ -894,3 +894,76 @@ def test_converged_growth_is_silent(win, monkeypatch):
          bb.x1 + 60, (bb.y0 + bb.y1) / 2)
 
     assert not any("맞추지 못했습니다" in m for m in seen), seen
+
+
+# --- usertext도 같은 끌기다 --------------------------------------------------
+
+def _add_note(win, position=(0.5, 0.5)):
+    tid = win.session.add_text(0, "note", position)
+    win.canvas.draw()
+    art = next(t for t in win.session.fig.axes[0].texts
+               if getattr(t, "_figtune_id", None) == tid)
+    return tid, art
+
+
+def test_dragging_a_usertext_is_one_undo_step(win):
+    """한때 usertext 끌기는 히스토리에 아무것도 남기지 않았다.
+
+    실행 취소를 누르면 그 이동을 건너뛰고 그 전의 편집이 되돌아갔다.
+    사용자 눈에는 실행 취소가 엉뚱한 것을 되돌리는 것으로 보인다.
+    """
+    _, art = _add_note(win)
+    before = [round(v, 4) for v in art.get_position()]
+    steps = len(win.session.history._undo)
+
+    x, y = center(win, art)
+    drag(win.canvas, x, y, x + 80, y)
+    assert len(win.session.history._undo) - steps == 1
+    assert [round(v, 4) for v in art.get_position()] != before
+
+    win.undo()
+    assert [round(v, 4) for v in art.get_position()] == before
+
+
+def test_dragging_a_usertext_does_not_jump(win):
+    """글자 왼쪽 끝을 잡아도 앵커가 커서 밑으로 순간이동하면 안 된다."""
+    _, art = _add_note(win)
+    before = art.get_position()
+    bb = art.get_window_extent(win.canvas.get_renderer())
+    grab_x, grab_y = bb.x0 + 2, (bb.y0 + bb.y1) / 2
+
+    press(win.canvas, grab_x, grab_y)
+    move(win.canvas, grab_x + 40, grab_y)
+    move(win.canvas, grab_x, grab_y)          # 잡은 자리로 되돌아온다
+    release(win.canvas, grab_x, grab_y)
+
+    now = art.get_position()
+    assert now[0] == pytest.approx(before[0], abs=1e-3)
+    assert now[1] == pytest.approx(before[1], abs=1e-3)
+
+
+def test_dragging_a_usertext_refits_the_paper(win):
+    """다른 끌기와 같이 종이가 따라와야 한다. 아니면 글자가 잘린 채 남는다.
+
+    '커진다'가 아니라 '맞춰진다'이다. 종이는 내용의 경계 + 여백이므로,
+    같은 끌기에 처음의 남는 여백이 함께 정리되면 오히려 줄어들 수 있다.
+    """
+    _, art = _add_note(win)
+    fig = win.session.fig
+    before = tuple(round(v, 3) for v in fig.get_size_inches())
+
+    x, y = center(win, art)
+    drag(win.canvas, x, y, x + 400, y)
+
+    assert tuple(round(v, 3) for v in fig.get_size_inches()) != before, \
+        "종이가 전혀 맞춰지지 않았습니다"
+    edge = art.get_window_extent(win.canvas.get_renderer()).x1
+    assert edge <= fig.get_window_extent().x1 + 1, "글자가 종이 밖에 남았습니다"
+
+
+def test_mini_toolbar_returns_after_a_usertext_drag(win):
+    """끌기가 끝나면 막대를 다시 내준다 — 이어서 손볼 것이 있게 마련이다."""
+    _, art = _add_note(win)
+    x, y = center(win, art)
+    drag(win.canvas, x, y, x + 80, y)
+    assert win.canvas.bar.shown

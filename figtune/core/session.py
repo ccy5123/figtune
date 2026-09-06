@@ -211,12 +211,27 @@ class Session:
 
     # --- 편집 ------------------------------------------------------------
 
+    def recorded_value(self, path: str, name: str) -> Any:
+        """되돌릴 때 쓸 '이전 값'.
+
+        usertext의 값은 overrides가 아니라 UserText 객체에 산다. overrides만
+        보면 늘 None이 나오고, 실행 취소가 위치를 None으로 밀어 넣는다.
+        """
+        s = sel.parse(path)
+        if s.kind == "usertext":
+            t = self.spec.text_by_id(s.name)
+            if t is None:
+                return None
+            return list(t.position) if name == "position" \
+                else getattr(t, name, None)
+        return self.spec.of(path).get(name, None)
+
     def set_prop(self, path: str, name: str, value: Any, record: bool = True) -> None:
         kind = sel.parse(path).kind
         # 값은 spec에 들어가기 전에 정규형으로 접힌다. 여기서 하지 않으면
         # '-'와 'solid'가 서로 다른 override로 남는다.
         value = canon.value(kind, name, value)
-        old = self.spec.of(path).get(name, None)
+        old = self.recorded_value(path, name)
         self._apply_raw(path, name, value)
         canon.light(self.spec)          # 편집 결과도 정규형을 유지한다
         if record:
@@ -225,7 +240,7 @@ class Session:
 
     def reset_prop(self, path: str, name: str) -> None:
         """override를 제거하고 화면도 원래 값으로 되돌린다."""
-        old = self.spec.of(path).get(name)
+        old = self.recorded_value(path, name)
         self._apply_raw(path, name, None)
         canon.light(self.spec)
         self.history.push(Command(path, name, old, None))
@@ -267,8 +282,11 @@ class Session:
             t = self.spec.text_by_id(s.name)
             if t is None:
                 return
-            if name == "position" and value is not None:
-                t.position = [float(value[0]), float(value[1])]
+            if name == "position":
+                # 위치만은 '없음'이 될 수 없다. None을 그대로 넣으면 다음
+                # ensure_text가 t.position[0]에서 터진다.
+                if value is not None:
+                    t.position = [float(value[0]), float(value[1])]
             elif hasattr(t, name):
                 setattr(t, name, value)
             ap.sync_text(self.fig, self.spec, s.name)
@@ -299,13 +317,9 @@ class Session:
         self.dirty = True
         return tid
 
-    def move_text(self, tid: str, x: float, y: float) -> None:
-        t = self.spec.text_by_id(tid)
-        if t is None:
-            return
-        t.position = [float(x), float(y)]
-        ap.sync_text(self.fig, self.spec, tid)
-        self.dirty = True
+    # move_text는 없다. usertext의 위치도 set_prop(path, "position", …)으로
+    # 옮긴다 — 전용 경로를 두었더니 그 길에만 실행 취소와 종이 맞추기가
+    # 빠져 있었다.
 
     def can_delete(self, path: str) -> bool:
         """원본 스크립트가 만든 텍스트는 지우지 않는다.

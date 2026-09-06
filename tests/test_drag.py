@@ -27,6 +27,32 @@ def fig():
     plt.close(f)
 
 
+def _with_usertext(coords):
+    """figtune이 추가한 텍스트가 하나 있는 figure. spec 없이 artist만 만든다."""
+    f, ax = plt.subplots(figsize=(6, 4))
+    ax.plot([0, 1], [0, 1])
+    pos = (0.5, 0.5) if coords == "axes" else (0.5, 0.5)
+    art = ax.text(pos[0], pos[1], "note",
+                  transform=ax.transAxes if coords == "axes" else ax.transData)
+    art._figtune_id = "t001"
+    f.canvas.draw()
+    return f, "ax0.text:t001", art
+
+
+@pytest.fixture
+def usertext():
+    f, path, art = _with_usertext("axes")
+    yield f, path, art
+    plt.close(f)
+
+
+@pytest.fixture
+def usertext_data():
+    f, path, art = _with_usertext("data")
+    yield f, path, art
+    plt.close(f)
+
+
 def target_at(fig, x, y, selected=None, kind=None):
     ts = hit.hit(fig, None, x, y, selected=selected)
     return next(t for t in ts if kind is None or t.kind == kind)
@@ -268,11 +294,47 @@ def test_layer_and_page_are_not_draggable(fig):
         assert drag.begin(fig, t, 0, 0)[0] is None
 
 
-def test_usertext_is_left_to_the_session(fig):
-    """usertext만 spec의 texts에 별도로 산다 — 갱신 경로가 다르다."""
-    t = hit.Target(kind="text", path="ax0.text:t001", label="t", axes=0,
-                   movable=True)
-    assert drag.begin(fig, t, 0, 0)[0] is None
+def test_usertext_does_not_jump_on_grab(usertext):
+    """usertext도 다른 텍스트와 같은 규칙을 따른다.
+
+    한때 usertext만 이 모듈을 우회해 커서 좌표를 위치로 그대로 썼다. 잡은
+    지점과의 차이를 기억하지 않아, 글자 끝을 잡으면 앵커가 커서 밑으로
+    순간이동했다 — 이 파일이 막으려는 바로 그 현상이다.
+    """
+    f, path, art = usertext
+    x, y = center(art, f)
+    t = hit.Target(kind="text", path=path, label="t", axes=0, movable=True)
+    d, _ = drag.begin(f, t, x, y)
+    ch = drag.update(f, d, x, y)
+    assert ch.value == [round(v, 4) for v in art.get_position()]
+
+
+def test_usertext_moves_by_the_cursor_delta(usertext):
+    f, path, art = usertext
+    x, y = center(art, f)
+    t = hit.Target(kind="text", path=path, label="t", axes=0, movable=True)
+    d, _ = drag.begin(f, t, x, y)
+    before = [round(v, 4) for v in art.get_position()]
+    ch = drag.update(f, d, x + 40, y)
+    assert ch.value[0] > before[0] and ch.value[1] == before[1]
+
+
+def test_data_coordinate_usertext_uses_its_own_transform(usertext_data):
+    """usertext는 좌표계를 스스로 고른다(data/axes/figure).
+
+    축 좌표로 가정하면 data 좌표 텍스트가 커서보다 몇 배 빠르게 달아난다.
+    """
+    f, path, art = usertext_data
+    ax = f.axes[0]
+    x, y = center(art, f)
+    t = hit.Target(kind="text", path=path, label="t", axes=0, movable=True)
+    d, _ = drag.begin(f, t, x, y)
+    ch = drag.update(f, d, x + 40, y)
+
+    # 커서가 실제로 지나간 data 거리와 같아야 한다
+    inv = ax.transData.inverted()
+    expect = inv.transform((x + 40, y))[0] - inv.transform((x, y))[0]
+    assert ch.value[0] == pytest.approx(art.get_position()[0] + expect, abs=1e-3)
 
 
 def test_values_are_plain_python_floats(fig):

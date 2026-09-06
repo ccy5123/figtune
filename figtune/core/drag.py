@@ -8,8 +8,10 @@ Origin에서 제목이나 범례를 잡아 끄는 조작에 대응한다. 계산
 집는 순간 그림이 튀고, 그러면 조작이 아니라 사고가 된다. 그래서 시작
 시점의 값과 커서를 함께 기억하고 그 차이만 더한다.
 
-figtune이 추가한 텍스트(usertext)는 여기서 다루지 않는다. 그것만 spec의
-texts에 별도로 살고 있어서 override와 갱신 경로가 다르다.
+figtune이 추가한 텍스트(usertext)는 spec의 texts에 별도로 살지만 끌기는
+여기를 함께 거친다. 한때 UI가 따로 옮겼는데, 그 경로에는 잡은 지점 보정도
+실행 취소도 종이 맞추기도 없었다. 저장 위치가 다르다고 조작까지 달라질
+이유는 없다 — 갈라지는 지점은 session.set_prop 한 곳으로 충분하다.
 """
 
 from __future__ import annotations
@@ -53,8 +55,25 @@ class Drag:
     moved: bool = False
 
 
+def _usertext_transform(fig, path: str):
+    """usertext가 자기 위치를 표현하는 좌표계. 못 찾으면 None.
+
+    usertext만 좌표계를 스스로 고른다 (data / axes / figure). 축 좌표로
+    가정하면 data 좌표 텍스트가 커서와 다른 속도로 달아난다.
+    """
+    try:
+        art = sel.resolve(fig, path)
+    except sel.SelectorError:
+        return None
+    return getattr(art, "get_transform", lambda: None)()
+
+
 def _transform(fig, path: str, axes: int | None):
     """이 대상의 위치가 어느 좌표계로 표현되는가."""
+    if sel.parse(path).kind == "usertext":
+        tr = _usertext_transform(fig, path)
+        if tr is not None:
+            return tr
     if path.startswith("fig") or axes is None:
         return fig.transFigure
     return fig.axes[axes].transAxes
@@ -77,7 +96,7 @@ def begin(fig, target, x: float, y: float) -> tuple[Drag | None, list[Change]]:
         return _begin_resize(fig, target, x, y), []
     if target.kind == "legend":
         return _begin_legend(fig, target, x, y)
-    if target.kind == "text" and sel.parse(target.path).kind != "usertext":
+    if target.kind == "text":
         return _begin_text(fig, target, x, y), []
     return None, []
 

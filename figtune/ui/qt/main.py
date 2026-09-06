@@ -102,7 +102,6 @@ class Canvas(FigureCanvasQTAgg):
         self.win = window
         self._map = None            # hit.HitMap — 다시 그릴 때까지 유효
         self._drag = None           # (core.drag.Drag, 시작 override 값)
-        self._usertext = None       # usertext는 spec의 texts에 따로 산다
         self._pending = None        # 끌기인지 제자리 편집인지 아직 모른다
         self.editor = direct.InPlaceEditor(self)
         self.editor.committed.connect(self._commit_text)
@@ -319,9 +318,6 @@ class Canvas(FigureCanvasQTAgg):
     # --- 끌기 -------------------------------------------------------------
 
     def _start_drag(self, target, event):
-        if sel.parse(target.path).kind == "usertext" and event.xdata is not None:
-            self._usertext = sel.parse(target.path).name
-            return
         d, pins = drag.begin(self.figure, target, event.x, event.y)
         if d is None:
             return
@@ -335,7 +331,7 @@ class Canvas(FigureCanvasQTAgg):
         # 직전 편집과 한 칸으로 합쳐지면 실행 취소가 둘을 한꺼번에 되돌린다
         self.win.session.history.seal()
         prop = "bbox_to_anchor" if d.kind == "legend" else "position"
-        before = self.win.session.spec.of(d.path).get(prop)
+        before = self.win.session.recorded_value(d.path, prop)
         self._drag = (d, before, extras)
 
     def _motion(self, event):
@@ -345,9 +341,6 @@ class Canvas(FigureCanvasQTAgg):
                 return                       # 아직 클릭인지 끌기인지 모른다
             self._pending = None
             self._start_drag(target, _at(event, x0, y0))
-        if self._usertext is not None:
-            self._move_usertext(event)
-            return
         if self._drag is not None:
             self._drag_to(event)
             return
@@ -374,30 +367,11 @@ class Canvas(FigureCanvasQTAgg):
         self.win.status(f"{change.path}.{change.prop} = "
                         f"{[round(v, 3) for v in change.value]}")
 
-    def _move_usertext(self, event):
-        if event.inaxes is None or event.xdata is None:
-            return
-        tid = self._usertext
-        t = self.win.session.spec.text_by_id(tid)
-        if t is None:
-            return
-        if t.coords == "data":
-            x, y = event.xdata, event.ydata
-        else:
-            x, y = event.inaxes.transAxes.inverted().transform((event.x, event.y))
-        self.win.session.move_text(tid, x, y)
-        self.draw_idle()
-        self.win.status(f"{tid} → ({x:.3f}, {y:.3f})")
-
     def _release(self, event):
         if self._pending is not None:
             target, x0, y0 = self._pending
             self._pending = None
             self._open_editor(target, _at(event, x0, y0))
-            return
-        if self._usertext is not None:
-            self._usertext = None
-            self.win.after_edit()
             return
         if self._drag is None:
             return
@@ -407,7 +381,7 @@ class Canvas(FigureCanvasQTAgg):
             return
         # 끌기 한 번이 실행 취소 한 칸이다
         prop = "bbox_to_anchor" if d.kind == "legend" else "position"
-        after = self.win.session.spec.of(d.path).get(prop)
+        after = self.win.session.recorded_value(d.path, prop)
         extras += self._grow_paper()
         self.win.session.history.push(
             Command(d.path, prop, before, after, extra=extras))
