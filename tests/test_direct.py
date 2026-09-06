@@ -1,0 +1,858 @@
+"""캔버스 직접 조작.
+
+세 가지 조작이 한 제스처를 놓고 겹친다.
+  · 텍스트를 한 번 클릭 → 그 자리에 캐럿
+  · 같은 텍스트를 끌기   → 위치 이동
+  · 축 상자 모서리 끌기  → 크기 변경
+
+누른 시점에는 클릭인지 끌기인지 알 수 없다. 그래서 움직인 거리로 가른다.
+이 경계가 무너지면 글자를 고치려다 그림이 밀리거나, 옮기려다 편집기가 뜬다.
+"""
+
+import os
+import shutil
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+import matplotlib
+matplotlib.use("Agg")
+
+from matplotlib.backend_bases import MouseEvent
+
+EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "plot_fig3.py"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _offscreen():
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    """Qt 플랫폼 플러그인이 없는 환경(시스템 라이브러리 미설치)에서는 건너뛴다.
+
+    import는 되는데 QApplication 생성에서 죽는 경우가 있어서, importorskip
+    만으로는 막히지 않는다. 여기서 잡지 않으면 테스트가 실패가 아니라
+    프로세스 중단으로 끝나 원인이 안 보인다.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        return app
+    try:
+        return QApplication([])
+    except Exception as exc:                     # pragma: no cover - 환경 의존
+        pytest.skip(f"Qt를 띄울 수 없습니다: {exc}")
+
+
+@pytest.fixture
+def win(qapp, tmp_path):
+    from figtune.ui.qt.main import MainWindow
+
+    script = tmp_path / "plot_fig3.py"
+    shutil.copy(EXAMPLE, script)
+    w = MainWindow(script)
+    w.canvas.draw()
+    yield w
+    w.close()
+
+
+def press(c, x, y, dbl=False):
+    c._press(MouseEvent("button_press_event", c, x, y, 1, dblclick=dbl))
+
+
+def move(c, x, y):
+    c._motion(MouseEvent("motion_notify_event", c, x, y, None))
+
+
+def release(c, x, y):
+    c._release(MouseEvent("button_release_event", c, x, y, 1))
+
+
+def click(c, x, y, jitter=1.0):
+    """누르고 거의 안 움직이고 뗀다 — 손떨림 수준."""
+    press(c, x, y)
+    move(c, x + jitter, y)
+    release(c, x + jitter, y)
+
+
+def drag(c, x0, y0, x1, y1):
+    press(c, x0, y0)
+    move(c, x1, y1)
+    release(c, x1, y1)
+
+
+def center(win, artist):
+    bb = artist.get_window_extent(win.canvas.get_renderer())
+    return (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2
+
+
+# --- 클릭과 끌기의 경계 ------------------------------------------------------
+
+def test_click_on_a_title_opens_the_caret(win):
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    assert win.canvas.editor.active
+    assert win.canvas.editor.text() == "Uptake"
+
+
+def test_click_does_not_move_the_title(win):
+    """캐럿을 놓으려던 클릭이 글자를 밀면 안 된다."""
+    ax = win.session.fig.axes[0]
+    before = list(ax.title.get_position())
+    click(win.canvas, *center(win, ax.title))
+    assert list(ax.title.get_position()) == before
+    assert win.session.spec.of("ax0.title").get("position") is None
+
+
+def test_dragging_a_title_moves_it_and_skips_the_editor(win):
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x + 40, y + 8)
+    assert not win.canvas.editor.active, "옮기려는데 편집기가 떴습니다"
+    assert win.session.spec.of("ax0.title").get("position") is not None
+
+
+def test_caret_lands_near_the_click(win):
+    """글자 한가운데를 누르면 캐럿도 한가운데여야 한다."""
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    pos = win.canvas.editor.cursorPosition()
+    assert 0 < pos < len("Uptake")
+
+
+# --- 제자리 편집 -----------------------------------------------------------
+
+def test_committing_updates_both_figure_and_spec(win):
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    win.canvas.editor.setText("Uptake (rev)")
+    win.canvas.editor.commit()
+    assert ax.title.get_text() == "Uptake (rev)"
+    assert win.session.spec.of("ax0.title").get("text") == "Uptake (rev)"
+
+
+def test_escape_leaves_everything_alone(win):
+    """잘못 눌렀을 때 아무 일도 없어야 한다."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    win.canvas.editor.setText("망친 제목")
+    win.canvas.editor.keyPressEvent(
+        QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    assert not win.canvas.editor.active
+    assert ax.title.get_text() == "Uptake"
+    assert win.session.spec.of("ax0.title").get("text") is None
+
+
+def test_unchanged_text_records_nothing(win):
+    """열었다 그대로 닫으면 override가 생기면 안 된다."""
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    win.canvas.editor.commit()
+    assert win.session.spec.of("ax0.title").get("text") is None
+
+
+def test_clicking_elsewhere_commits(win):
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    win.canvas.editor.setText("확정됨")
+    bb = ax.get_window_extent()
+    press(win.canvas, bb.x0 + 30, bb.y0 + 20)
+    assert not win.canvas.editor.active
+    assert ax.title.get_text() == "확정됨"
+
+
+def test_axis_label_is_editable_in_place(win):
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.xaxis.label))
+    assert win.canvas.editor.active
+    assert win.canvas.editor.text() == "Time (h)"
+
+
+# --- 끌기 ------------------------------------------------------------------
+
+def test_dragging_the_legend_pins_and_moves_it(win):
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    drag(win.canvas, x, y, x - 50, y - 30)
+    over = win.session.spec.of("ax0.legend")
+    assert over.get("bbox_to_anchor") is not None
+    assert over.get("loc") in ("upper left", "upper right", "lower left",
+                              "lower right", "center", "center left",
+                              "center right", "upper center", "lower center")
+
+
+def test_resizing_needs_a_selection_first(win):
+    """핸들이 늘 살아 있으면 축선을 누르려는 클릭을 가로챈다."""
+    ax = win.session.fig.axes[0]
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, bb.y1, bb.x1 + 25, bb.y1 + 15)
+    assert win.session.spec.of("ax0").get("position") is None
+
+
+def test_resizing_after_selecting_changes_the_box(win):
+    ax = win.session.fig.axes[0]
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, bb.y1, bb.x1 + 25, bb.y1 + 15)
+    got = win.session.spec.of("ax0").get("position")
+    assert got is not None and len(got) == 4
+
+
+def test_a_drag_is_one_undo_step(win):
+    """마우스 이동마다 한 칸씩 쌓이면 실행 취소가 1픽셀을 되돌린다."""
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.title)
+    before = len(win.session.history._undo)
+    press(win.canvas, x, y)
+    for step in range(5, 45, 5):
+        move(win.canvas, x + step, y)
+    release(win.canvas, x + 40, y)
+    assert len(win.session.history._undo) - before == 1
+
+
+def test_undo_restores_the_figure_not_just_the_spec(win):
+    """spec에서만 지우면 화면은 그대로다 — 되돌린 것처럼 보이지 않는다.
+
+    figtune은 스크립트를 다시 돌리기 전까지 '원래 값'을 알 방법이 없다.
+    그래서 세션이 첫 override 직전 값을 기억해 두었다가 여기서 되돌린다.
+    """
+    ax = win.session.fig.axes[0]
+    before = [round(v, 4) for v in ax.title.get_position()]
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x + 40, y + 10)
+    assert [round(v, 4) for v in ax.title.get_position()] != before
+
+    win.undo()
+    assert win.session.spec.of("ax0.title").get("position") is None
+    assert [round(v, 4) for v in ax.title.get_position()] == before
+
+
+def test_consecutive_undos_each_take_effect(win):
+    """연속으로 눌렀을 때 한 번씩 되돌아와야 한다.
+
+    보고된 증상: 몇 번은 먹는 것 같다가 멈추고, 다른 조작을 하면 한꺼번에
+    풀린다. 되돌리기가 화면에 반영되지 않아 생기는 착시였다.
+    """
+    ax = win.session.fig.axes[0]
+    orig_title = [round(v, 4) for v in ax.title.get_position()]
+    orig_box = [round(v, 4) for v in ax.get_position().bounds]
+
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x + 45, y + 10)
+    win.canvas.draw()
+    # 제목을 옮기면 종이도 다시 맞춰져 축 위치가 함께 바뀐다
+    after_title = [round(v, 4) for v in ax.get_position().bounds]
+
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2, bb.x1 - 50, (bb.y0 + bb.y1) / 2)
+    win.canvas.draw()
+    assert [round(v, 4) for v in ax.get_position().bounds] != after_title
+
+    win.undo()
+    assert [round(v, 4) for v in ax.get_position().bounds] == after_title
+    win.undo()
+    assert [round(v, 4) for v in ax.title.get_position()] == orig_title
+    assert [round(v, 4) for v in ax.get_position().bounds] == orig_box
+
+
+def test_a_legend_drag_is_still_one_undo(win):
+    """범례를 끌면 앵커와 함께 loc도 확정된다. 둘이 따로 쌓이면 두 번 눌러야 한다."""
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    before = len(win.session.history._undo)
+    drag(win.canvas, x, y, x - 50, y - 30)
+    assert len(win.session.history._undo) - before == 1
+
+    win.undo()
+    over = win.session.spec.of("ax0.legend")
+    assert over.get("bbox_to_anchor") is None
+    assert over.get("loc") is None, "loc 고정이 남으면 범례가 제자리로 안 온다"
+
+
+def test_redo_puts_it_back(win):
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x + 40, y)
+    moved = list(win.session.spec.of("ax0.title")["position"])
+    win.undo()
+    win.redo()
+    assert win.session.spec.of("ax0.title")["position"] == moved
+    assert [round(v, 4) for v in ax.title.get_position()] == moved
+
+
+def test_resetting_a_property_also_restores_the_figure(win):
+    """인스펙터의 ↺ 버튼도 같은 길을 쓴다."""
+    ax = win.session.fig.axes[0]
+    before = round(ax.title.get_fontsize(), 4)
+    win.session.set_prop("ax0.title", "fontsize", 22.0)
+    assert round(ax.title.get_fontsize(), 4) == 22.0
+    win.session.reset_prop("ax0.title", "fontsize")
+    assert round(ax.title.get_fontsize(), 4) == before
+
+
+# --- 커서 ------------------------------------------------------------------
+
+def test_cursor_shows_what_can_be_done(win):
+    from PySide6.QtCore import Qt
+
+    ax = win.session.fig.axes[0]
+    bb = ax.get_window_extent()
+    cases = [
+        (center(win, ax.title), Qt.SizeAllCursor),        # 열 십자 — 옮길 수 있다
+        (center(win, ax.get_legend()), Qt.SizeAllCursor),
+        ((bb.x0 + 40, bb.y0 + 25), Qt.ArrowCursor),
+    ]
+    for (x, y), want in cases:
+        move(win.canvas, x, y)
+        assert win.canvas.cursor().shape() == want
+
+
+def test_selected_box_corner_shows_a_resize_cursor(win):
+    from PySide6.QtCore import Qt
+
+    win.select("ax0")
+    bb = win.session.fig.axes[0].get_window_extent()
+    move(win.canvas, bb.x1, bb.y1)
+    assert win.canvas.cursor().shape() == Qt.SizeBDiagCursor
+    move(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2)
+    assert win.canvas.cursor().shape() == Qt.SizeHorCursor
+
+
+# --- 판정 지도 캐시 ---------------------------------------------------------
+
+def test_map_is_rebuilt_after_a_redraw(win):
+    """다시 그리면 기하가 달라진다. 낡은 지도를 쓰면 클릭이 어긋난다."""
+    m = win.canvas.hitmap()
+    assert win.canvas.hitmap() is m           # 그리기 전에는 재사용
+    win.canvas.draw()
+    assert win.canvas.hitmap() is not m
+
+
+# --- 종이가 따라 커진다 ------------------------------------------------------
+
+def test_dragging_past_the_edge_grows_the_paper(win):
+    """종이 밖으로 나간 만큼은 잘려서 보이지 않는다. 잘라내는 대신 키운다."""
+    fig = win.session.fig
+    before_w = round(fig.get_size_inches()[0], 3)
+    win.select("ax1")
+    bb = fig.axes[1].get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 + 300, (bb.y0 + bb.y1) / 2)
+    assert round(fig.get_size_inches()[0], 3) > before_w
+    x0, y0, w, h = fig.axes[1].get_position().bounds
+    assert x0 + w <= 1 + 1e-6, "키웠는데도 여전히 넘칩니다"
+
+
+def test_growing_is_part_of_the_same_undo_step(win):
+    """따로 쌓이면 실행 취소가 축만 되돌리고 종이는 그대로 둔다."""
+    fig = win.session.fig
+    before_w = round(fig.get_size_inches()[0], 3)
+    steps = len(win.session.history._undo)
+    win.select("ax1")
+    bb = fig.axes[1].get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 + 300, (bb.y0 + bb.y1) / 2)
+    assert len(win.session.history._undo) - steps == 1
+
+    win.undo()
+    assert round(fig.get_size_inches()[0], 3) == before_w
+    assert win.session.spec.of("ax1").get("position") is None
+
+
+def test_paper_follows_the_content_both_ways(win):
+    """좌우도 상하와 똑같이 늘고 줄어야 한다."""
+    fig = win.session.fig
+    ax = fig.axes[0]
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    before_w = round(fig.get_size_inches()[0], 3)
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 - 60, (bb.y0 + bb.y1) / 2)          # 좁힌다
+    win.canvas.draw()
+    assert round(fig.get_size_inches()[0], 3) < before_w
+
+
+# --- 두 히스토리는 서로를 건드리지 않는다 --------------------------------------
+
+def _toolbar(win):
+    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
+    return win.findChild(NavigationToolbar2QT)
+
+
+def test_toolbar_back_does_not_undo_a_figtune_edit(win):
+    """matplotlib의 내비게이션 스택은 뷰 한계와 함께 축 위치까지 담았다가
+    되돌린다. 그대로 두면 툴바의 뒤로가기가 figtune으로 옮긴 축 상자를
+    화면에서만 되돌려 놓고, spec은 그대로 남아 화면과 코드가 어긋난다.
+    """
+    nav = _toolbar(win)
+    ax = win.session.fig.axes[0]
+    nav.push_current()                       # 사용자가 한 번 확대했다고 치자
+
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 - 60, (bb.y0 + bb.y1) / 2)
+    edited = [round(v, 4) for v in win.session.spec.of("ax0")["position"]]
+
+    nav.back()
+    win.canvas.draw()
+    assert [round(v, 4) for v in ax.get_position().bounds] == edited, \
+        "툴바 뒤로가기가 배치를 되돌렸습니다"
+    assert [round(v, 4) for v in win.session.spec.of("ax0")["position"]] == edited
+
+
+def test_toolbar_home_does_not_undo_a_figtune_edit(win):
+    nav = _toolbar(win)
+    ax = win.session.fig.axes[0]
+    nav.push_current()
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 - 60, (bb.y0 + bb.y1) / 2)
+    edited = [round(v, 4) for v in win.session.spec.of("ax0")["position"]]
+
+    nav.home()
+    win.canvas.draw()
+    assert [round(v, 4) for v in ax.get_position().bounds] == edited
+
+
+def test_toolbar_still_restores_the_view(win):
+    """배치를 지켰다고 확대·이동까지 못 되돌리면 툴바가 쓸모없어진다."""
+    nav = _toolbar(win)
+    ax = win.session.fig.axes[0]
+    original = [round(v, 3) for v in ax.get_xlim()]
+    nav.push_current()
+    ax.set_xlim(10, 30)
+    nav.push_current()
+    nav.back()
+    win.canvas.draw()
+    assert [round(v, 3) for v in ax.get_xlim()] == original
+
+
+def test_figtune_undo_is_unaffected_by_the_toolbar(win):
+    nav = _toolbar(win)
+    ax = win.session.fig.axes[0]
+    before = [round(v, 4) for v in ax.get_position().bounds]
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 - 60, (bb.y0 + bb.y1) / 2)
+    nav.push_current()
+    nav.back()
+    nav.home()
+
+    win.undo()
+    win.canvas.draw()
+    assert win.session.spec.of("ax0").get("position") is None
+    assert [round(v, 4) for v in ax.get_position().bounds] == before
+
+
+def test_zoom_alone_never_touches_the_spec(win):
+    """확대·이동은 관찰 도구다. 잠깐 둘러본 것까지 기록되면 안 된다."""
+    win.session.fig.axes[0].set_xlim(10, 30)
+    _toolbar(win).push_current()
+    assert win.session.spec.of("ax0").get("xlim") is None
+    assert len(win.session.history._undo) == 0
+
+
+def test_applying_the_view_writes_the_range(win):
+    win.session.fig.axes[0].set_xlim(10, 30)
+    _toolbar(win).push_current()
+    win.apply_view_to_spec()
+    assert win.session.spec.of("ax0")["xlim"] == [10.0, 30.0]
+    body = win.session.preview_code().split("def apply_style(fig):", 1)[1]
+    assert "set_xlim" in body
+
+
+def test_applying_an_unchanged_view_records_nothing(win):
+    """손대지 않은 그림에 xlim이 생기면 '명시된 키만 override'가 깨진다."""
+    win.apply_view_to_spec()
+    for path in ("ax0", "ax1"):
+        assert win.session.spec.of(path).get("xlim") is None
+        assert win.session.spec.of(path).get("ylim") is None
+    assert len(win.session.history._undo) == 0
+
+
+def test_applying_the_view_is_one_undo_step(win):
+    """패널이 여럿이라 네 값이 바뀌어도 한 칸이다."""
+    fig = win.session.fig
+    fig.axes[0].set_xlim(10, 30)
+    fig.axes[0].set_ylim(1, 2)
+    fig.axes[1].set_xlim(0.2, 0.8)
+    _toolbar(win).push_current()
+    before = len(win.session.history._undo)
+    win.apply_view_to_spec()
+    assert len(win.session.history._undo) - before == 1
+
+    win.undo()
+    for path in ("ax0", "ax1"):
+        assert win.session.spec.of(path).get("xlim") is None
+        assert win.session.spec.of(path).get("ylim") is None
+
+
+def test_view_differs_reports_the_state(win):
+    assert not win.view_differs()
+    win.session.fig.axes[0].set_xlim(10, 30)
+    assert win.view_differs()
+    win.apply_view_to_spec()
+    assert not win.view_differs()
+
+
+def test_export_leaves_the_exploratory_zoom_out(win, tmp_path):
+    """확대한 채로 내보내면 그림에는 확대가 들어가는데 코드에는 없다.
+    그 어긋남을 만들지 않으려면 내보낼 때만 spec의 범위로 되돌려야 한다."""
+    ax = win.session.fig.axes[0]
+    original = [round(v, 3) for v in ax.get_xlim()]
+    ax.set_xlim(10, 30)
+    _toolbar(win).push_current()
+
+    seen = {}
+    real = win.session.export
+
+    def spy(path, **kw):
+        seen["xlim"] = [round(v, 3) for v in ax.get_xlim()]
+        return real(path, **kw)
+
+    win.session.export = spy
+    with win.spec_view() as restored:
+        win.session.export(tmp_path / "a.png", dpi=60)
+    assert restored is True
+    assert seen["xlim"] == original, "내보낼 때 확대가 그대로 들어갔습니다"
+    # 내보낸 뒤에는 보던 화면으로 돌아온다
+    assert [round(v, 3) for v in ax.get_xlim()] == [10.0, 30.0]
+
+
+def test_export_is_untouched_when_the_view_matches(win, tmp_path):
+    with win.spec_view() as restored:
+        pass
+    assert restored is False
+
+
+def test_recording_the_view_does_not_disturb_the_layout(win):
+    ax = win.session.fig.axes[0]
+    win.select("ax0")
+    bb = ax.get_window_extent()
+    drag(win.canvas, bb.x1, (bb.y0 + bb.y1) / 2,
+         bb.x1 - 60, (bb.y0 + bb.y1) / 2)
+    box = list(win.session.spec.of("ax0")["position"])
+    ax.set_xlim(10, 30)
+    _toolbar(win).push_current()
+    assert win.session.spec.of("ax0")["position"] == box
+
+
+# --- 미니 툴바 --------------------------------------------------------------
+
+def test_clicking_pops_a_mini_toolbar(win):
+    """Origin의 결론 — 자주 쓰는 서너 개는 손이 가 있는 자리에서 바로."""
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.get_legend()))
+    bar = win.canvas.bar
+    assert bar.shown and bar.path == "ax0.legend"
+    assert list(bar._rows) == list(__import__(
+        "figtune.core.props", fromlist=["P"]).PRIMARY["legend"])
+
+
+def test_toolbar_is_rebuilt_at_full_size_each_time(win):
+    """보이는 상태에서 갈아끼우면 새 위젯이 숨겨진 채로 잡혀 막대가 찌부러진다."""
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.get_legend()))
+    first = win.canvas.bar.width()
+    tick = next(t for t in ax.get_xticklabels() if t.get_text())
+    click(win.canvas, *center(win, tick))
+    assert win.canvas.bar.width() > 40, win.canvas.bar.geometry().getRect()
+    assert first > 40
+
+
+def test_toolbar_stays_inside_the_canvas(win):
+    ax = win.session.fig.axes[0]
+    bb = ax.get_window_extent()
+    click(win.canvas, bb.x0 + 4, bb.y1 - 4)          # 구석
+    bar = win.canvas.bar
+    g = bar.geometry()
+    assert g.left() >= 0 and g.top() >= 0
+    assert g.right() <= win.canvas.width() and g.bottom() <= win.canvas.height()
+
+
+def test_editing_from_the_toolbar_reaches_the_spec(win):
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.get_legend()))
+    win.canvas.bar.edited.emit("ax0.legend", "frameon", False)
+    assert win.session.spec.of("ax0.legend")["frameon"] is False
+
+
+def test_toolbar_hides_once_dragging_starts(win):
+    """누르는 순간 치우면 끌지 않고 고르기만 해도 사라진다."""
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    press(win.canvas, x, y)
+    assert win.canvas.bar.shown, "누르자마자 사라졌습니다"
+    move(win.canvas, x - 40, y - 20)
+    assert not win.canvas.bar.shown
+    release(win.canvas, x - 40, y - 20)
+
+
+def test_toolbar_comes_back_after_a_drag(win):
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    drag(win.canvas, x, y, x - 40, y - 20)
+    assert win.canvas.bar.shown
+
+
+# --- 탭 대화상자 ------------------------------------------------------------
+
+def test_double_click_on_an_axis_opens_every_part(win):
+    """Origin의 Axis Dialog — 눈금·축선·격자·범위가 한 화면에 온다."""
+    ax = win.session.fig.axes[0]
+    tick = next(t for t in ax.get_xticklabels() if t.get_text())
+    x, y = center(win, tick)
+    press(win.canvas, x, y, dbl=True)
+    dlg = win.canvas._dialog
+    assert dlg is not None
+    assert dlg.tabs.count() == 5
+    assert win.canvas._target.scope() == (
+        "ax0.xtick.major", "ax0.xtick.minor", "ax0.spine:bottom",
+        "ax0.grid.x", "ax0")
+    dlg.close()
+
+
+def test_dialog_edits_reach_the_spec(win):
+    ax = win.session.fig.axes[0]
+    tick = next(t for t in ax.get_xticklabels() if t.get_text())
+    press(win.canvas, *center(win, tick), dbl=True)
+    dlg = win.canvas._dialog
+    dlg.edited.emit("ax0.grid.x", "visible", True)
+    assert win.session.spec.of("ax0.grid.x")["visible"] is True
+    dlg.close()
+
+
+def test_dialog_reset_restores_the_figure(win):
+    ax = win.session.fig.axes[0]
+    win.session.set_prop("ax0.title", "fontsize", 22.0)
+    press(win.canvas, *center(win, ax.title), dbl=True)
+    dlg = win.canvas._dialog
+    dlg.reset.emit("ax0.title", "fontsize")
+    assert win.session.spec.of("ax0.title").get("fontsize") is None
+    dlg.close()
+
+
+def test_double_click_does_not_open_the_caret(win):
+    """더블클릭은 전체 편집기다. 캐럿이 함께 뜨면 둘이 겹친다."""
+    ax = win.session.fig.axes[0]
+    press(win.canvas, *center(win, ax.title), dbl=True)
+    assert not win.canvas.editor.active
+    assert win.canvas._dialog is not None
+    win.canvas._dialog.close()
+
+
+# --- 선택 표시 --------------------------------------------------------------
+
+def test_selection_draws_a_box_around_the_target(win):
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    assert win.canvas._highlight is not None
+    x, y, w, h = win.canvas._highlight
+    assert w > 0 and h > 0
+
+
+def test_highlight_follows_the_exact_target_not_just_the_path(win):
+    """위·아래 축선은 둘 다 'x축'이라 path가 같다. 합치면 테두리가 상자
+    세로 전체를 덮어 무엇을 골랐는지 알 수 없어진다."""
+    ax = win.session.fig.axes[0]
+    tick = next(t for t in ax.get_xticklabels() if t.get_text())
+    click(win.canvas, *center(win, tick))
+    _x, _y, _w, h = win.canvas._highlight
+    box_h = ax.get_window_extent().height
+    assert h < box_h / 2, "테두리가 축 상자 전체를 덮었습니다"
+
+
+def test_clearing_the_selection_clears_the_box(win):
+    win.select("ax0.title")
+    assert win.canvas._highlight is not None
+    win.select(None)
+    assert win.canvas._highlight is None
+    assert not win.canvas.bar.shown
+
+
+def test_highlight_is_not_a_figure_artist(win):
+    """matplotlib artist로 그리면 내보낸 그림에까지 테두리가 따라 들어간다."""
+    before = sum(len(ax.patches) for ax in win.session.fig.axes)
+    win.select("ax0")
+    win.canvas.draw()
+    after = sum(len(ax.patches) for ax in win.session.fig.axes)
+    assert after == before
+
+
+# --- 색 견본 ----------------------------------------------------------------
+
+def test_swatch_text_is_readable_on_any_background():
+    """견본에 hex를 찍는데 글자색을 고정하면 어두운 색에서 검정 위 검정이
+    되어 아무것도 안 보인다. 검은 눈금이 기본값이라 흔히 걸린다."""
+    from figtune.ui.qt.widgets import contrasting_text
+
+    assert contrasting_text("#000000") == "#ffffff"
+    assert contrasting_text("#ffffff") == "#000000"
+    assert contrasting_text("#00008b") == "#ffffff"      # 어두운 파랑
+    assert contrasting_text("#ffff00") == "#000000"      # 밝은 노랑
+
+
+def test_swatch_handles_names_and_garbage():
+    from figtune.ui.qt.widgets import contrasting_text
+
+    assert contrasting_text("red") in ("#000000", "#ffffff")
+    assert contrasting_text("이건 색이 아니다") == "#000000"
+
+
+def test_swatch_style_does_not_leak_into_the_colour_dialog(qapp):
+    """스타일시트는 자식 위젯으로 번진다. 이 버튼을 부모로 삼는 색 선택
+    대화상자까지 검은 배경을 물려받아 글자가 하나도 안 보이게 된다."""
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog
+
+    from figtune.ui.qt.widgets import ColorButton
+
+    btn = ColorButton("#000000")
+    dlg = QColorDialog(QColor("#000000"), btn)
+    dlg.setOption(QColorDialog.DontUseNativeDialog, True)
+    try:
+        assert dlg.palette().window().color().name() != "#000000"
+    finally:
+        dlg.deleteLater()
+        btn.deleteLater()
+
+
+def test_swatch_stylesheet_is_scoped_to_itself(qapp):
+    from figtune.ui.qt.widgets import ColorButton
+
+    btn = ColorButton("#2ca02c")
+    assert btn.styleSheet().startswith(f"QPushButton#{ColorButton.OBJECT_NAME}")
+    btn.deleteLater()
+
+
+# --- Esc로 놓기 -------------------------------------------------------------
+
+def _escape(widget):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    widget.keyPressEvent(
+        QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+
+
+def test_escape_clears_the_whole_selection(win):
+    """그림만 보고 싶을 때 막대·테두리가 겹쳐 있으면 거슬린다."""
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.get_legend()))
+    assert win.canvas.bar.shown and win.canvas._highlight is not None
+
+    _escape(win.canvas)
+    assert not win.canvas.bar.shown
+    assert win.canvas._highlight is None
+    assert win._current is None
+
+
+def test_escape_clears_the_tree_selection_too(win):
+    """하나만 지우면 화면마다 다른 것을 고른 것처럼 보인다."""
+    win.select("ax0.title")
+    win._sync_tree_selection("ax0.title")
+    assert win.tree.selectedItems()
+    _escape(win.canvas)
+    assert not win.tree.selectedItems()
+
+
+def test_escape_inside_the_toolbar_also_clears(win):
+    """막대 입력칸에 포커스가 있으면 캔버스는 Esc를 받지 못한다."""
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.get_legend()))
+    _escape(win.canvas.bar)
+    assert not win.canvas.bar.shown
+    assert win._current is None
+
+
+def test_escape_while_editing_cancels_the_edit_first(win):
+    """편집 중 Esc는 글자를 되돌리는 것이지 선택을 푸는 것이 아니다."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    ax = win.session.fig.axes[0]
+    click(win.canvas, *center(win, ax.title))
+    assert win.canvas.editor.active
+    win.canvas.editor.setText("망친 제목")
+    win.canvas.editor.keyPressEvent(
+        QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    assert not win.canvas.editor.active
+    assert ax.title.get_text() == "Uptake"
+    assert win._current == "ax0.title", "편집 취소가 선택까지 풀었습니다"
+
+
+def test_escape_with_nothing_selected_is_harmless(win):
+    _escape(win.canvas)
+    assert win._current is None
+
+
+def test_apply_range_button_lives_next_to_the_zoom_tools(win):
+    """확대는 툴바에서 한다. 남기는 버튼이 메뉴에만 있으면 찾지 못한다."""
+    assert win.apply_view_act in _toolbar(win).actions()
+
+
+def test_apply_range_button_is_off_until_there_is_something_to_apply(win):
+    assert not win.apply_view_act.isEnabled()
+    win.session.fig.axes[0].set_xlim(10, 30)
+    _toolbar(win).push_current()
+    assert win.apply_view_act.isEnabled()
+
+
+def test_apply_range_button_turns_off_after_applying(win):
+    win.session.fig.axes[0].set_xlim(10, 30)
+    _toolbar(win).push_current()
+    win.apply_view_act.trigger()
+    assert not win.apply_view_act.isEnabled()
+    assert win.session.spec.of("ax0")["xlim"] == [10.0, 30.0]
+
+
+def test_apply_range_button_comes_back_after_undo(win):
+    win.session.fig.axes[0].set_xlim(10, 30)
+    _toolbar(win).push_current()
+    win.apply_view_act.trigger()
+    win.undo()
+    assert win.apply_view_act.isEnabled()
+
+
+def test_paper_returns_when_the_title_comes_back_down(win):
+    """보고된 증상: 제목을 올렸다 내렸는데 흰 영역이 커진 채로 남았다."""
+    fig = win.session.fig
+    ax = fig.axes[0]
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x, y + 3)               # 한 번 맞춰 놓는다
+    win.canvas.draw()
+    settled = round(fig.get_size_inches()[1], 2)
+
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x, y + 130)
+    win.canvas.draw()
+    assert round(fig.get_size_inches()[1], 2) > settled
+
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x, y - 130)
+    win.canvas.draw()
+    assert round(fig.get_size_inches()[1], 2) == pytest.approx(settled, abs=0.1)
+
+
+def test_paper_can_shrink_below_the_original(win):
+    """제목이 처음보다 낮아지면 처음보다 줄어야 한다."""
+    fig = win.session.fig
+    ax = fig.axes[0]
+    start = round(fig.get_size_inches()[1], 2)
+    x, y = center(win, ax.title)
+    drag(win.canvas, x, y, x, y - 40)
+    win.canvas.draw()
+    assert round(fig.get_size_inches()[1], 2) < start
