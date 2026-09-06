@@ -52,6 +52,10 @@ class Session:
                                after=lambda: canon.light(self.spec))
         self.dirty = False
         self.style_readonly = False
+        # (path, prop) -> override를 처음 걸기 직전의 값.
+        # 이것이 없으면 실행 취소가 spec에서만 지우고 화면은 그대로여서,
+        # 되돌린 것처럼 보이지 않는다.
+        self._pristine: dict[tuple[str, str], Any] = {}
 
     # --- 경로 규약 -------------------------------------------------------
 
@@ -82,6 +86,7 @@ class Session:
         self.fig = result.figure
 
         self._last_sources = result.data_sources
+        self._pristine.clear()
 
         if spec is not None:
             self.spec = spec
@@ -200,12 +205,34 @@ class Session:
         self.dirty = True
 
     def reset_prop(self, path: str, name: str) -> None:
-        """override를 제거한다. figure를 되돌리려면 reload가 필요하다."""
+        """override를 제거하고 화면도 원래 값으로 되돌린다."""
         old = self.spec.of(path).get(name)
-        self.spec.unset(path, name)
+        self._apply_raw(path, name, None)
         canon.light(self.spec)
         self.history.push(Command(path, name, old, None))
         self.dirty = True
+
+    def _restore_pristine(self, path: str, name: str) -> None:
+        """override를 걸기 전의 값으로 figure를 되돌린다.
+
+        spec에서 지우는 것만으로는 부족하다. 살아있는 artist는 이미 바뀐
+        상태이고, 스크립트를 다시 돌리기 전까지는 스스로 돌아오지 않는다.
+        그래서 처음 덮어쓰기 직전의 값을 기억해 두었다가 여기서 되돌린다.
+        """
+        old = self._pristine.pop((path, name), None)
+        if old is None or self.fig is None:
+            return
+        s = sel.parse(path)
+        try:
+            if s.kind == "legend":
+                # 범례는 한 번에 다시 만들어야 한다. 하나만 되돌리면
+                # 나머지 override가 기본값으로 같이 날아간다.
+                P.apply_legend(self.fig.axes[s.axes],
+                               {**self.spec.of(path), name: old})
+            else:
+                P.apply(self.fig, path, name, old)
+        except Exception:
+            pass                # 되돌리지 못해도 spec은 이미 정리됐다
 
     def _apply_raw(self, path: str, name: str, value: Any) -> None:
         if not path:
@@ -230,7 +257,12 @@ class Session:
 
         if value is None:
             self.spec.unset(path, name)
+            self._restore_pristine(path, name)
             return
+
+        key = (path, name)
+        if key not in self._pristine:
+            self._pristine[key] = P.get(self.fig, path, name)
         ap.apply_one(self.fig, self.spec, path, name, value)
 
     # --- user text -------------------------------------------------------

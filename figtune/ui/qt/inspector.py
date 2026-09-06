@@ -6,6 +6,7 @@ props.REGISTRY에 Prop을 하나 추가하면 GUI에도 자동으로 나타난�
 
 from __future__ import annotations
 
+from matplotlib.colors import to_rgb
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox,
@@ -17,11 +18,40 @@ from ...core import props as P
 from ...core import selector as sel
 
 
+# 글자색을 배경에 맞춰 뒤집는 기준. WCAG 상대휘도에서 흰 글자와 검은 글자의
+# 대비가 같아지는 지점이라, 어느 쪽으로 가도 최소 대비가 보장된다.
+LUMA_FLIP = 0.179
+
+
+def contrasting_text(color: str) -> str:
+    """이 배경 위에서 읽히는 글자색.
+
+    색 견본에 hex를 찍어 보여주는데, 글자색을 고정하면 어두운 색에서 검정
+    위 검정이 되어 아무것도 안 보인다. 검은색 눈금이 기본값이라 흔히 걸린다.
+    """
+    try:
+        r, g, b = to_rgb(color)
+    except (ValueError, TypeError):
+        return "#000000"
+
+    def linear(c):
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    luma = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    return "#000000" if luma > LUMA_FLIP else "#ffffff"
+
+
 class ColorButton(QPushButton):
     changed = Signal(str)
 
+    # 스타일시트는 자식 위젯으로 번진다. 이 버튼을 부모로 삼는 색 선택
+    # 대화상자까지 검은 배경을 물려받아 글자가 하나도 안 보이게 된다.
+    # 그래서 객체 이름으로 이 위젯 하나에만 걸리도록 좁힌다.
+    OBJECT_NAME = "figtuneSwatch"
+
     def __init__(self, value: str | None = None):
         super().__init__()
+        self.setObjectName(self.OBJECT_NAME)
         self.setFixedHeight(24)
         self._value = value or "#000000"
         self.setValue(self._value)
@@ -30,7 +60,10 @@ class ColorButton(QPushButton):
     def setValue(self, v: str | None):
         self._value = v or "#000000"
         self.setStyleSheet(
-            f"background:{self._value}; border:1px solid #888; border-radius:3px;")
+            f"QPushButton#{self.OBJECT_NAME} {{"
+            f" background:{self._value};"
+            f" color:{contrasting_text(self._value)};"
+            " border:1px solid #888; border-radius:3px; }")
         self.setText(self._value)
 
     def value(self) -> str:

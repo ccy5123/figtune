@@ -32,27 +32,34 @@ class History:
         self.after = after
         self._undo: list[Command] = []
         self._redo: list[Command] = []
+        self._sealed = False
         self.depth = depth
 
     def push(self, cmd: Command) -> None:
         # 같은 속성을 연속으로 만지면 (슬라이더 드래그) 하나로 합친다
-        if self._undo:
+        if self._undo and not self._sealed:
             last = self._undo[-1]
             if last.path == cmd.path and last.prop == cmd.prop:
                 last.new = cmd.new
                 self._redo.clear()
                 return
+        self._sealed = False
         self._undo.append(cmd)
         if len(self._undo) > self.depth:
             self._undo.pop(0)
         self._redo.clear()
 
     def seal(self) -> None:
-        """다음 push가 직전 커맨드와 합쳐지지 않게 한다 (드래그 종료 시점)."""
-        self._undo.append(Command("", "", None, None, label="__barrier__"))
-        self._undo.pop()
-        if self._undo:
-            self._undo[-1] = Command(**{**self._undo[-1].__dict__})
+        """다음 push를 직전 커맨드와 합치지 않는다.
+
+        끌기 하나가 실행 취소 한 칸이어야 한다. 경계를 긋지 않으면 같은
+        속성을 두 번 만졌을 때 둘이 한 칸으로 합쳐져, 실행 취소 한 번이
+        두 번의 조작을 되돌린다.
+
+        표식을 스택에 넣는 대신 깃발을 세운다. 표식을 넣으면 undo가 그것을
+        만나 아무것도 하지 않는 헛걸음을 하게 된다.
+        """
+        self._sealed = True
 
     def can_undo(self) -> bool:
         return bool(self._undo)

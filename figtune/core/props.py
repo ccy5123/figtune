@@ -670,6 +670,23 @@ _LEGEND_KW = ("loc", "bbox_to_anchor", "frameon", "fontsize", "ncols",
               "title", "labelspacing", "labels")
 
 
+def _decode_loc(leg):
+    """matplotlib은 loc을 정수 코드로 들고 있다. 사람이 읽는 이름으로 되돌린다.
+
+    사용자가 loc=(0.2, 0.7)처럼 좌표를 직접 준 경우는 이름이 없다. 그때는
+    None을 돌려준다 — 없는 이름을 지어내면 드롭다운이 거짓말을 한다.
+    """
+    from matplotlib.legend import Legend
+
+    raw = getattr(leg, "_loc", None)
+    if isinstance(raw, str):
+        return raw if raw in Legend.codes else None
+    for name, code in Legend.codes.items():
+        if raw == code:
+            return name
+    return None
+
+
 def _legend_get(ax, name):
     leg = ax.get_legend()
     if name == "visible":
@@ -677,6 +694,8 @@ def _legend_get(ax, name):
     if leg is None:
         return None
     try:
+        if name == "loc":
+            return _decode_loc(leg)
         if name == "frameon":
             return bool(leg.get_frame_on())
         if name == "title":
@@ -784,6 +803,8 @@ def _fig_legend_get(fig, name):
     try:
         if name == "visible":
             return bool(leg.get_visible())
+        if name == "loc":
+            return _decode_loc(leg)
         if name == "frameon":
             return bool(leg.get_frame_on())
         if name == "title":
