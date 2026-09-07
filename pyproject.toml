@@ -36,7 +36,10 @@ Issues = "https://github.com/ccy5123/figtune/issues"
 [project.optional-dependencies]
 gui = ["PySide6>=6.5"]
 pptx = ["python-pptx>=0.6.21"]
-dev = ["pytest>=7", "python-pptx>=0.6.21", "PySide6>=6.5"]
+# tomllib은 3.11부터다. 우리가 지원하는 하한은 3.10이므로 테스트가 읽을
+# TOML 파서를 따로 얹는다.
+dev = ["pytest>=7", "python-pptx>=0.6.21", "PySide6>=6.5",
+       "tomli>=2.0; python_version < '3.11'"]
 
 [project.scripts]
 figtune = "figtune.cli:main"
@@ -47,3 +50,8 @@ version = {attr = "figtune.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["figtune*"]
+
+# 휠은 .py만 담는다. 여기 적지 않은 파일은 조용히 빠져, README가 안내하는
+# 애드인 소스를 pip로 설치한 사람은 찾을 수 없게 된다.
+[tool.setuptools.package-data]
+"figtune.office" = ["*.bas"]

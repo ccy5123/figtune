@@ -8,8 +8,12 @@
 """
 
 import re
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:      # Python 3.10에는 없다 — 우리가 지원하는 하한
+    import tomli as tomllib
 
 import figtune
 
@@ -54,3 +58,35 @@ def test_declared_python_versions_match_requires_python():
                 for c in PYPROJECT["project"]["classifiers"]
                 if c.startswith("Programming Language :: Python :: 3.")}
     assert "3.10" in declared, "requires-python의 하한이 빠졌습니다"
+
+
+def test_ci_runs_the_lowest_python_we_claim():
+    """하한에서 돌려보지 않으면 '지원한다'는 말이 확인되지 않은 주장이다."""
+    ci = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    versions = set(re.findall(r'"(3\.\d+)"', ci))
+    assert "3.10" in versions, (
+        f"requires-python은 3.10부터인데 CI는 {sorted(versions)}만 돕니다")
+
+
+def _data_patterns() -> list[str]:
+    data = PYPROJECT["tool"]["setuptools"].get("package-data", {})
+    return [p for patterns in data.values() for p in patterns]
+
+
+def test_every_non_python_file_ships():
+    """휠은 .py만 담는다. package-data에 적지 않은 파일은 조용히 빠진다.
+
+    README는 FigTune.bas를 애드인 소스라고 안내한다. 그 파일이 휠에 없으면
+    pip로 설치한 사람은 안내대로 찾아가도 파일이 없다.
+    """
+    import fnmatch
+
+    patterns = _data_patterns()
+    missing = []
+    for path in sorted((ROOT / "figtune").rglob("*")):
+        if path.is_dir() or path.suffix == ".py" or "__pycache__" in path.parts:
+            continue
+        name = path.name
+        if not any(fnmatch.fnmatch(name, p) for p in patterns):
+            missing.append(str(path.relative_to(ROOT)))
+    assert not missing, f"package-data에 없어 휠에서 빠집니다: {missing}"
