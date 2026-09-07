@@ -106,11 +106,12 @@ MESSAGES = {
     # --- 그림 합치기 ------------------------------------------------------
     "그림 합치기": "Merge figures",
     "그래도 만들까요?": "Build it anyway?",
-    "{script}는 {files}을(를) 상대 경로로 읽습니다. 병합 파일을 {out}에 "
-    "두면 찾지 못합니다 — 데이터 옆에 저장하거나 절대 경로로 바꾸세요.":
-        "{script} reads {files} by a relative path. Put in {out}, the merge "
-        "file will not find it — save it next to the data, or make the path "
-        "absolute.",
+    "{script}는 경로를 변수로 만듭니다 ({calls}). 그것이 상대 경로라면 "
+    "병합 파일을 {out}에 두었을 때 찾지 못합니다 — 절대 경로로 바꾸거나 "
+    "데이터 옆에 저장하세요.":
+        "{script} builds its path from a variable ({calls}). If that is a "
+        "relative path, the merge file will not find it in {out} — make the "
+        "path absolute, or save next to the data.",
     "{name} — {r}x{c} 칸 권장": "{name} — best in {r}x{c} cells",
     "ax를 받는 plot(ax) 함수가 없습니다": "no plot(ax) function taking ax",
     "읽지 못했습니다: {err}": "could not read it: {err}",

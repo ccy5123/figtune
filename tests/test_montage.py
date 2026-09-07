@@ -733,34 +733,7 @@ def test_relative_data_reads(src, want):
     assert relative_data_reads(src) == want
 
 
-def test_no_warning_when_the_data_is_alongside(tmp_path):
-    (tmp_path / "d.csv").write_text("t,y\n0,1\n", encoding="utf-8")
-    (tmp_path / "p.py").write_text(READS.format(path="d.csv"), encoding="utf-8")
-    ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="p.py")])
-    assert data_warnings(ms, tmp_path, base_dir=tmp_path) == []
 
-
-def test_a_warning_when_the_merge_file_moves_away(tmp_path):
-    """옮겨 놓고 실행할 때가 되어서야 아는 것은 늦다."""
-    (tmp_path / "d.csv").write_text("t,y\n0,1\n", encoding="utf-8")
-    (tmp_path / "p.py").write_text(READS.format(path="d.csv"), encoding="utf-8")
-    out = tmp_path / "paper"
-    out.mkdir()
-
-    warns = data_warnings(MontageSpec(rows=1, cols=1,
-                                      panels=[PanelRef(script="p.py")]),
-                          out, base_dir=tmp_path)
-    assert len(warns) == 1
-    assert "d.csv" in warns[0] and "p.py" in warns[0]
-
-
-def test_absolute_paths_never_warn(tmp_path):
-    (tmp_path / "p.py").write_text(
-        READS.format(path=str(tmp_path / "d.csv")), encoding="utf-8")
-    out = tmp_path / "paper"
-    out.mkdir()
-    ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="p.py")])
-    assert data_warnings(ms, out, base_dir=tmp_path) == []
 
 
 # --- 데이터가 서로 다른 곳에 있는 패널들 ----------------------------------------
@@ -801,48 +774,8 @@ def _spec_for(a, b):
         PanelRef(script=str(b / "dose.py"))])
 
 
-def test_both_panels_are_named_when_the_output_is_elsewhere(two_sites):
-    """제3의 폴더에 두면 둘 다 못 찾는다 — 둘 다 말해야 한다."""
-    root, a, b, paper = two_sites
-    warns = data_warnings(_spec_for(a, b), paper, base_dir=root)
-    assert len(warns) == 2
-    assert any("uptake.csv" in w for w in warns)
-    assert any("dose.csv" in w for w in warns)
 
 
-def test_only_the_far_one_is_named_when_saved_beside_the_other(two_sites):
-    """한쪽 폴더에 두면 그쪽은 멀쩡하다. 멀쩡한 것까지 경고하면 읽히지 않는다."""
-    root, a, b, _paper = two_sites
-    warns = data_warnings(_spec_for(a, b), a, base_dir=root)
-    assert len(warns) == 1
-    assert "dose.py" in warns[0] and "uptake" not in warns[0]
-
-
-def test_the_merge_really_does_fail_there(two_sites):
-    """경고가 엄살이 아니라는 것 — 실제로 못 찾는다."""
-    root, a, b, paper = two_sites
-    out = generate_subplot_script(_spec_for(a, b), paper / "m.py", base_dir=root)
-    with pytest.raises(FileNotFoundError):
-        Session().open(out)
-
-
-def test_absolute_paths_make_it_work_from_anywhere(two_sites):
-    """경고가 일러 준 해법이 실제로 통해야 한다."""
-    root, a, b, paper = two_sites
-    (a / "uptake.py").write_text(
-        READS_LOCAL.format(data=str(a / "uptake.csv"), title="A"),
-        encoding="utf-8")
-    (b / "dose.py").write_text(
-        READS_LOCAL.format(data=str(b / "dose.csv"), title="B"),
-        encoding="utf-8")
-
-    ms = _spec_for(a, b)
-    assert data_warnings(ms, paper, base_dir=root) == []
-    out = generate_subplot_script(ms, paper / "m.py", base_dir=root)
-
-    s = Session()
-    s.open(out)
-    assert [ax.get_title() for ax in s.fig.axes] == ["A", "B"]
 
 
 def test_the_panels_still_run_on_their_own(two_sites):
@@ -876,11 +809,17 @@ def test_the_demo_generator_builds_what_it_promises(tmp_path):
     s.open(a / "uptake.py")
     assert s.fig.axes[0].get_title() == "Site A uptake"
 
-    # 그리고 합치면 경고가 둘 뜬다
+    # 그리고 데이터가 두 곳에 나뉘어 있어도 합쳐진다 — 경로가 고쳐지므로
     ms = MontageSpec(rows=1, cols=2, panels=[
         PanelRef(script=str(a / "uptake.py")),
         PanelRef(script=str(b / "dose.py"))])
-    assert len(data_warnings(ms, tmp_path / "paper", base_dir=tmp_path)) == 2
+    paper = tmp_path / "paper"
+    assert data_warnings(ms, paper, base_dir=tmp_path) == []
+    out = generate_subplot_script(ms, paper / "m.py", base_dir=tmp_path)
+    s2 = Session()
+    s2.open(out)
+    assert [ax.get_title() for ax in s2.fig.axes] == ["Site A uptake",
+                                                     "Site B dose"]
 
 
 # --- 중첩된 폴더 (a 안에 b) ----------------------------------------------------
@@ -910,42 +849,70 @@ def _nested_spec(a, b):
         PanelRef(script=str(b / "code_b.py"))])
 
 
-def test_saving_in_the_outer_folder_breaks_the_inner_one(nested):
+
+
+
+
+# --- 데이터 경로가 병합 위치에 맞게 고쳐진다 ------------------------------------
+#
+# 패널의 상대 경로는 그 패널 폴더 기준이다. 병합 파일 안으로 옮기면 병합
+# 파일 폴더에서 풀리므로 그대로 두면 못 찾는다. 병합 파일에서 보이는
+# 경로로 고쳐 옮기면 데이터가 여러 곳에 흩어져 있어도 전부 동작한다.
+#
+# 절대 경로로 바꾸지는 않는다. 이 PC에서는 편하지만 다른 사람에게 보내는
+# 순간 깨지고, 논문 그림에서는 그쪽이 더 아프다.
+
+def test_two_sites_just_work_now(two_sites):
+    """데이터가 서로 다른 폴더에 있어도, 어디에 저장하든 둘 다 그려진다."""
+    root, a, b, paper = two_sites
+    ms = _spec_for(a, b)
+    for where in (paper, a, b, root):
+        assert data_warnings(ms, where, base_dir=root) == []
+        out = generate_subplot_script(ms, where / "m.py", base_dir=root)
+        s = Session()
+        s.open(out)
+        assert [ax.get_title() for ax in s.fig.axes] == ["A", "B"], where.name
+
+
+def test_nested_folders_just_work_now(nested):
+    """중첩(a 안의 b)도 마찬가지다."""
     root, a, b = nested
-    warns = data_warnings(_nested_spec(a, b), a, base_dir=root)
-    assert len(warns) == 1 and "code_b.py" in warns[0]
-
-    out = generate_subplot_script(_nested_spec(a, b), a / "m.py", base_dir=root)
-    with pytest.raises(FileNotFoundError):
-        Session().open(out)
-
-
-def test_saving_in_the_inner_folder_breaks_the_outer_one(nested):
-    """안쪽에 두면 바깥이 보이지 않을까 — 통하지 않는다."""
-    root, a, b = nested
-    warns = data_warnings(_nested_spec(a, b), b, base_dir=root)
-    assert len(warns) == 1 and "code_a.py" in warns[0]
-
-
-def test_saving_outside_both_breaks_both(nested):
-    root, a, b = nested
-    assert len(data_warnings(_nested_spec(a, b), root, base_dir=root)) == 2
-
-
-def test_absolute_paths_work_from_every_folder(nested):
-    """해법이 중첩에서도 통해야 한다."""
-    root, a, b = nested
-    (a / "code_a.py").write_text(
-        READS_LOCAL.format(data=str(a / "data_a.csv"), title="A"),
-        encoding="utf-8")
-    (b / "code_b.py").write_text(
-        READS_LOCAL.format(data=str(b / "data_b.csv"), title="B"),
-        encoding="utf-8")
     ms = _nested_spec(a, b)
-
     for where in (a, b, root):
         assert data_warnings(ms, where, base_dir=root) == []
         out = generate_subplot_script(ms, where / "m.py", base_dir=root)
         s = Session()
         s.open(out)
-        assert [ax.get_title() for ax in s.fig.axes] == ["A", "B"]
+        assert [ax.get_title() for ax in s.fig.axes] == ["A", "B"], where.name
+
+
+def test_the_rewritten_path_is_relative_not_absolute(nested):
+    """절대 경로면 다른 사람에게 보내는 순간 깨진다."""
+    root, a, b = nested
+    out = generate_subplot_script(_nested_spec(a, b), a / "m.py", base_dir=root)
+    src = out.read_text(encoding="utf-8")
+    assert "read_csv('b/data_b.csv')" in src
+    assert str(root) not in src, "생성 코드에 이 PC의 경로가 박혔습니다"
+
+
+def test_the_panel_file_itself_is_untouched(nested):
+    """figtune은 원본을 고치지 않는다. 고쳐지는 것은 사본뿐이다."""
+    root, a, b = nested
+    before = (b / "code_b.py").read_text(encoding="utf-8")
+    generate_subplot_script(_nested_spec(a, b), a / "m.py", base_dir=root)
+    assert (b / "code_b.py").read_text(encoding="utf-8") == before
+
+
+def test_a_computed_path_is_reported_instead(nested):
+    """고칠 수 없는 것만 알린다 — 처리한 것까지 경고하면 읽히지 않는다."""
+    root, a, b = nested
+    (b / "code_b.py").write_text(
+        "import pandas as pd\nimport matplotlib.pyplot as plt\n"
+        "NAME = 'data_b.csv'\n"
+        "df = pd.read_csv(NAME)\n\n"
+        "def plot(ax):\n    ax.plot(df.x, df.y)\n", encoding="utf-8")
+
+    ms = _nested_spec(a, b)
+    assert data_warnings(ms, b, base_dir=root) == []      # 같은 폴더면 조용하다
+    warns = data_warnings(ms, a, base_dir=root)
+    assert len(warns) == 1 and "read_csv(NAME)" in warns[0]

@@ -251,23 +251,26 @@ def detect_projection(script: Path | str) -> str | None:
     return None
 
 
-def panel_block(source: str, label: str, name: str) -> str:
+def panel_block(source: str, label: str, name: str,
+                from_dir=None, to_dir=None) -> str:
     """패널 소스를 `def {name}(ax):` 블록으로 만든다.
 
     plot(ax)가 있으면 그것을 감싸고, 없으면 스크립트 자체를 감싼다. 후자는
     자기 figure를 만드는 줄을 걷어내는 일이라 원본을 고치는 것처럼 보이지만,
     병합 파일을 만들 때만 일어나고 원본은 그대로 남는다.
     """
+    where = {"from_dir": from_dir, "to_dir": to_dir}
     tree_has_plot = detect_plot_function_source(source)
     if tree_has_plot:
-        return inline.inline_panel(source, tree_has_plot, name, label=label)
+        return inline.inline_panel(source, tree_has_plot, name, label=label,
+                                   **where)
     # 축을 여러 개 만드는 스크립트도 감싼다. 그런 패널에는 그만큼의 축을
     # 목록으로 건네므로, 받는 이름이 ax가 아니라 axs가 된다.
     wrapped = autowrap.wrap_source(source, func="_draw", allow_multi=True)
     # 감싼 것을 다시 인라인 규칙에 태운다 — __file__ 검사 등이 그대로 걸린다
     arg = "axs" if wrapped.startswith("def _draw(axs)") else "ax"
     return inline.inline_panel(wrapped + "\n", "_draw", name,
-                               label=label, arg=arg)
+                               label=label, arg=arg, **where)
 
 
 def detect_plot_function_source(source: str) -> str | None:
@@ -322,12 +325,39 @@ def relative_data_reads(source: str) -> list[str]:
     return out
 
 
+def unresolvable_data_reads(source: str) -> list[str]:
+    """경로를 문자열로 적지 않아 고쳐 옮길 수 없는 읽기들.
+
+    `read_csv('a.csv')`는 병합 위치에 맞게 고쳐 옮긴다. 그러나
+    `read_csv(PATH)`처럼 변수로 만든 경로는 무엇이 될지 알 수 없어 손댈 수
+    없고, 그대로 옮기면 병합 파일 폴더에서 풀린다.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "attr", getattr(node.func, "id", None))
+        if name not in _READERS or not node.args:
+            continue
+        arg = node.args[0]
+        if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+            out.append(f"{name}({ast.unparse(arg)})")
+    return out
+
+
 def data_warnings(mspec: MontageSpec, out_dir: Path | str,
                   base_dir: Path | str = ".") -> list[str]:
-    """병합 파일을 그 자리에 두면 데이터를 못 찾는 패널들.
+    """고쳐 옮길 수 없는 데이터 경로를 쓰는 패널들.
 
-    옮겨 놓고 실행할 때가 되어서야 아는 것은 늦다. 그때 나오는 것은 날것의
-    FileNotFoundError뿐이라 왜 그런지도 알 수 없다.
+    문자열로 적힌 상대 경로는 병합 위치에 맞게 고쳐지므로 알릴 것이 없다.
+    변수로 만든 경로만 남는데, 그것도 패널과 병합 파일이 같은 폴더면
+    아무 문제가 없다 — 그때는 조용하다.
+
+    처리한 것까지 경고하면 경고가 읽히지 않는다.
     """
     base = Path(base_dir).resolve()
     out = Path(out_dir).resolve()
@@ -335,17 +365,17 @@ def data_warnings(mspec: MontageSpec, out_dir: Path | str,
     for ref in mspec.panels:
         script, _ = ref.resolve(base)
         if script.parent == out:
-            continue          # 같은 폴더면 그대로 풀린다
+            continue          # 같은 폴더면 상대 경로가 그대로 풀린다
         try:
-            reads = relative_data_reads(script.read_text(encoding="utf-8"))
+            unknown = unresolvable_data_reads(script.read_text(encoding="utf-8"))
         except OSError:
             continue
-        if reads:
+        if unknown:
             msgs.append(_t(
-                "{script}는 {files}을(를) 상대 경로로 읽습니다. 병합 파일을 "
-                "{out}에 두면 찾지 못합니다 — 데이터 옆에 저장하거나 "
-                "절대 경로로 바꾸세요.",
-                script=script.name, files=", ".join(reads), out=out.name))
+                "{script}는 경로를 변수로 만듭니다 ({calls}). 그것이 상대 "
+                "경로라면 병합 파일을 {out}에 두었을 때 찾지 못합니다 — "
+                "절대 경로로 바꾸거나 데이터 옆에 저장하세요.",
+                script=script.name, calls=", ".join(unknown), out=out.name))
     return msgs
 
 
@@ -473,8 +503,11 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
         script, _ = ref.resolve(base)
         name = f"_panel_{i}"
         try:
+            # 데이터 경로를 병합 파일에서 보이는 것으로 고쳐 옮긴다.
+            # 원본은 건드리지 않는다 — 고쳐지는 것은 사본뿐이다.
             block = panel_block(script.read_text(encoding="utf-8"),
-                                script.name, name)
+                                script.name, name,
+                                from_dir=script.parent, to_dir=out.parent)
         except (inline.InlineError, autowrap.WrapError) as exc:
             missing.append(f"{script}\n      {exc}")
             continue

@@ -17,6 +17,8 @@ Qt도 matplotlib도 import하지 않는다 — 순수한 소스 변환이다.
 from __future__ import annotations
 
 import ast
+import os
+from pathlib import Path, PurePosixPath
 
 from ..i18n import t as _t
 
@@ -68,8 +70,61 @@ def _defines(tree, name: str) -> bool:
     return False
 
 
+# 데이터를 읽는 흔한 호출들. 여기 없는 방법으로 읽으면 고치지 못한다.
+_READERS = (
+    "read_csv", "read_excel", "read_table", "read_parquet", "read_json",
+    "read_pickle", "read_hdf", "loadtxt", "genfromtxt", "load", "open",
+    "imread", "read_feather", "read_stata",
+)
+
+
+def _rewrites(tree, from_dir: Path, to_dir: Path) -> dict:
+    """고쳐야 할 경로 리터럴: (줄, 열) -> (원문 길이, 새 경로).
+
+    패널의 상대 경로는 그 패널 폴더 기준이다. 병합 파일 안으로 옮기면 병합
+    파일 폴더에서 풀리므로, 병합 파일에서 보이는 경로로 바꿔 옮긴다.
+
+    절대 경로로 바꾸지 않는다. 이 PC에서는 편하지만 다른 사람에게 보내는
+    순간 깨지고, 논문 그림에서는 그쪽이 더 아프다.
+    """
+    out = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if getattr(node.func, "attr", getattr(node.func, "id", None)) \
+                not in _READERS:
+            continue
+        for arg in node.args[:1]:
+            if not (isinstance(arg, ast.Constant)
+                    and isinstance(arg.value, str)):
+                continue          # 변수로 조립한 경로는 알 수 없다
+            if PurePosixPath(arg.value).is_absolute() \
+                    or Path(arg.value).is_absolute():
+                continue          # 절대 경로는 어디서든 같다
+            new = os.path.relpath(from_dir / arg.value, to_dir)
+            if new != arg.value:
+                out[(arg.lineno, arg.col_offset)] = (
+                    arg.end_col_offset - arg.col_offset, new)
+    return out
+
+
+def _apply_rewrites(lines: list[str], rewrites: dict) -> list[str]:
+    """줄 안의 리터럴만 바꾼다. 나머지 글자는 건드리지 않는다 — 주석과
+    서식이 사라지면 병합 파일을 사람이 이어서 고칠 수 없다."""
+    if not rewrites:
+        return lines
+    out = list(lines)
+    # 한 줄에 여러 개면 뒤에서부터 — 앞을 먼저 바꾸면 뒤의 열 번호가 밀린다
+    for (ln, col), (width, new) in sorted(rewrites.items(), reverse=True):
+        if not 1 <= ln <= len(out):
+            continue
+        text = out[ln - 1]
+        out[ln - 1] = text[:col] + repr(new) + text[col + width:]
+    return out
+
+
 def inline_panel(source: str, func: str, name: str, label: str = "",
-                 arg: str = "ax") -> str:
+                 arg: str = "ax", from_dir=None, to_dir=None) -> str:
     """패널 소스를 `def {name}(ax):` 블록 하나로 만든다.
 
     func는 ax를 받는 함수 이름(보통 plot)이다. 감싼 함수의 마지막 줄에서
@@ -77,6 +132,10 @@ def inline_panel(source: str, func: str, name: str, label: str = "",
 
     arg는 받는 이름이다. 축을 여러 개 쓰는 패널에는 목록을 건네므로 axs가
     된다 — 이름이 곧 하나인지 여럿인지를 말한다.
+
+    from_dir/to_dir을 주면 데이터 경로를 병합 파일에서 보이는 상대 경로로
+    고쳐 옮긴다. 원본 파일은 건드리지 않는다 — 고쳐지는 것은 여기서 만드는
+    사본뿐이다.
     """
     where = label or _t("패널")
     try:
@@ -103,8 +162,11 @@ def inline_panel(source: str, func: str, name: str, label: str = "",
         if _main_guard(node) or _future_import(node):
             drop.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
 
-    kept = [ln for i, ln in enumerate(source.splitlines(), start=1)
-            if i not in drop]
+    lines = source.splitlines()
+    if from_dir is not None and to_dir is not None:
+        lines = _apply_rewrites(
+            lines, _rewrites(tree, Path(from_dir), Path(to_dir)))
+    kept = [ln for i, ln in enumerate(lines, start=1) if i not in drop]
     # 앞뒤 빈 줄은 감싼 함수 안에서 뜻이 없다
     while kept and not kept[0].strip():
         kept.pop(0)

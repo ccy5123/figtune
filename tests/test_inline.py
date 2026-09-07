@@ -133,3 +133,72 @@ def test_indentation_of_nested_blocks_is_preserved():
     ''').strip() + "\n"
     out = inline_panel(src, "plot", "_panel_0")
     assert "            if i:" in out          # 4(감싸기) + 8(원문)
+
+
+# --- 데이터 경로 보정 ----------------------------------------------------------
+#
+# 패널의 상대 경로는 그 패널 폴더 기준이다. 병합 파일 안으로 옮기면 병합
+# 파일 폴더에서 풀리므로 그대로 두면 못 찾는다. 병합 파일에서 보이는
+# 경로로 고쳐 옮긴다 — 절대 경로가 아니라 상대 경로로. 절대 경로는 다른
+# 사람에게 보내는 순간 깨지고, 논문 그림에서는 그쪽이 더 아프다.
+
+READS = '''import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('data.csv')          # 우리 데이터
+
+
+def plot(ax):
+    ax.plot(df.x, df.y)
+'''
+
+
+def test_a_path_is_rewritten_for_the_merge_location():
+    out = inline_panel(READS, "plot", "_p", from_dir="/lab/a/b",
+                       to_dir="/lab/a")
+    assert "read_csv('b/data.csv')" in out
+    assert "read_csv('data.csv')" not in out
+
+
+def test_a_path_in_the_same_folder_is_left_alone():
+    out = inline_panel(READS, "plot", "_p", from_dir="/lab/a", to_dir="/lab/a")
+    assert "read_csv('data.csv')" in out
+
+
+def test_a_path_can_go_upwards():
+    out = inline_panel(READS, "plot", "_p", from_dir="/lab/siteA",
+                       to_dir="/lab/paper")
+    assert "read_csv('../siteA/data.csv')" in out
+
+
+def test_the_rest_of_the_line_survives():
+    """주석과 서식이 사라지면 병합 파일을 사람이 이어서 고칠 수 없다."""
+    out = inline_panel(READS, "plot", "_p", from_dir="/lab/a/b",
+                       to_dir="/lab/a")
+    assert "# 우리 데이터" in out
+
+
+def test_an_absolute_path_is_left_alone():
+    src = READS.replace("'data.csv'", "'/mnt/share/data.csv'")
+    out = inline_panel(src, "plot", "_p", from_dir="/lab/a/b", to_dir="/lab/a")
+    assert "'/mnt/share/data.csv'" in out
+
+
+def test_a_computed_path_is_left_alone():
+    """변수로 조립한 경로는 알 수 없다 — 손대면 더 나빠진다."""
+    src = READS.replace("pd.read_csv('data.csv')", "pd.read_csv(PATH)")
+    out = inline_panel(src, "plot", "_p", from_dir="/lab/a/b", to_dir="/lab/a")
+    assert "read_csv(PATH)" in out
+
+
+def test_nothing_happens_without_the_directories():
+    """어디서 어디로 가는지 모르면 고칠 근거가 없다."""
+    assert "read_csv('data.csv')" in inline_panel(READS, "plot", "_p")
+
+
+def test_several_reads_on_one_line_are_all_rewritten():
+    src = ("import numpy as np\n"
+           "a, b = np.loadtxt('u.txt'), np.loadtxt('v.txt')\n\n"
+           "def plot(ax):\n    ax.plot(a, b)\n")
+    out = inline_panel(src, "plot", "_p", from_dir="/lab/a/b", to_dir="/lab/a")
+    assert "np.loadtxt('b/u.txt')" in out and "np.loadtxt('b/v.txt')" in out
