@@ -29,6 +29,7 @@ from ...core import apply as ap  # noqa: E402
 from ...core import drag  # noqa: E402
 from ...core import hit  # noqa: E402
 from ...core import layout  # noqa: E402
+from ...core import props as P  # noqa: E402
 from ...core import selector as sel  # noqa: E402
 from ...core.history import Command  # noqa: E402
 from ...core.session import EXISTS, Session  # noqa: E402
@@ -710,19 +711,33 @@ class MainWindow(QMainWindow):
             picked, getattr(self.canvas, "_target", None)
             if not from_tree else None)
         if not picked:
-            self.inspector.show_path(None, {}, set())
+            self.inspector.show([], {}, set())
             self.canvas.bar.hide_bar()
             return
-        path = picked[-1]
-        vals = self.session.values(path)
-        over = {n for n in self.session.spec.of(path)}
-        if sel.parse(path).kind == "usertext":
-            over = set(vals)
-        self.inspector.show_path(path, vals, over)
-        self.status(path if len(picked) == 1
+        vals, mixed, over = self._shared_values(picked)
+        self.inspector.show(picked, vals, over, mixed)
+        self.status(picked[0] if len(picked) == 1
                     else _t("{n}개 선택됨", n=len(picked)))
         if not from_tree:
             self._sync_tree_selection(picked)
+
+    def _shared_values(self, paths):
+        """고른 것들의 (공통값, 값이 갈리는 속성, override된 속성).
+
+        값이 갈리면 공통값을 지어내지 않는다. 아무 값이나 채우면 그것이 현재
+        값인 줄 알고 넘어가서, 건드리지 않은 대상까지 그 값으로 덮인다.
+        """
+        per_path = {p: self.session.values(p) for p in paths}
+        vals, mixed, over = {}, set(), set()
+        for prop in P.common_props([sel.parse(p).kind for p in paths]):
+            seen = [per_path[p].get(prop.name) for p in paths]
+            if all(v == seen[0] for v in seen[1:]):
+                vals[prop.name] = seen[0]
+            else:
+                mixed.add(prop.name)
+            if any(self.session.is_overridden(p, prop.name) for p in paths):
+                over.add(prop.name)
+        return vals, mixed, over
 
     def has_selection(self) -> bool:
         return bool(self._selection) or self.canvas.bar.shown
@@ -757,13 +772,20 @@ class MainWindow(QMainWindow):
             self.tree.setCurrentItem(last)
         self.tree.blockSignals(False)
 
-    def _on_edit(self, path, name, value):
+    def _on_edit(self, name, value):
+        """인스펙터에서 고친 값을 고른 것 전부에 넣는다.
+
+        인스펙터는 교집합만 보여주므로, 화면에 있는 것은 곧 전부에 적용된다.
+        """
+        paths = self.selection()
+        if not paths:
+            return
         try:
-            self.session.set_prop(path, name, value)
+            self.session.set_props(paths, name, value)
         except Exception as exc:
             self.status(_t("적용 실패: {err}", err=exc))
             return
-        if path == "fig" and name == "size_inches":
+        if "fig" in paths and name == "size_inches":
             self.canvas_frame.fit()
         self.canvas.draw_idle()
         self.mark_dirty()
@@ -771,10 +793,16 @@ class MainWindow(QMainWindow):
         if self.right.currentIndex() == 1:
             self._refresh_code()
 
-    def _on_reset(self, path, name):
-        self.session.reset_prop(path, name)
+    def _on_reset(self, name):
+        paths = self.selection()
+        for path in paths:
+            self.session.reset_prop(path, name)
+        if not paths:
+            return
         self.status(_t("{path}.{name} override 제거됨 — 재실행하면 "
-                       "원래값으로 돌아갑니다", path=path, name=name))
+                       "원래값으로 돌아갑니다",
+                       path=paths[0] if len(paths) == 1
+                       else _t("{n}개 선택됨", n=len(paths)), name=name))
         self.mark_dirty()
 
     def refresh_overlays(self):
@@ -791,8 +819,13 @@ class MainWindow(QMainWindow):
             dlg.refresh(self.session.values)
 
     def refresh_inspector(self):
-        if getattr(self, "_current", None):
-            self.inspector.refresh_values(self.session.values(self._current))
+        """편집 뒤 값을 되읽는다. 여럿이면 공통값만 — 갈리는 칸은 비워 둔다."""
+        picked = self.selection()
+        if not picked:
+            return
+        vals, mixed, _over = self._shared_values(picked)
+        self.inspector.refresh_values(
+            {k: v for k, v in vals.items() if k not in mixed})
 
     # --- 보기(확대·이동) -------------------------------------------------
 
@@ -1118,9 +1151,8 @@ class MainWindow(QMainWindow):
         self.sync_view_action()
         self._build_menu_refresh()
         self.reload_tree()          # 트리 라벨에도 번역 대상이 있다
-        current = getattr(self, "_current", None)
-        self.select(current) if current else self.inspector.show_path(
-            None, {}, set())
+        picked = self.selection()
+        self.select_paths(picked) if picked else self.inspector.show([], {}, set())
 
     def _build_menu_refresh(self):
         self.menuBar().clear()

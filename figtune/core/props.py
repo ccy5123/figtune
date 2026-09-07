@@ -236,6 +236,67 @@ def props_for(kind: str) -> list[Prop]:
     return REGISTRY.get(kind, [])
 
 
+def _merge(props: list[Prop]) -> Prop | None:
+    """같은 이름의 Prop 여러 개를 하나로 접는다. 못 접으면 None.
+
+    라벨은 가장 짧은 것을 쓴다. 짧은 쪽이 대개 더 일반적인 말이라('선 두께'
+    보다 '두께') 여러 종류를 아우르는 표시로 자연스럽고, 규칙이 결정적이라
+    고른 순서에 따라 화면이 달라지지 않는다.
+
+    범위는 좁은 쪽으로 모은다. 한쪽에서 무효인 값을 넣을 수 있으면 교집합이
+    아니다. 눈금은 가장 고운 것을 쓴다 — 거친 쪽 값도 표현할 수 있다.
+    """
+    kinds = {p.kind for p in props}
+    if len(kinds) != 1:
+        return None          # 위젯 종류가 다르면 하나로 그릴 수 없다
+
+    choices: tuple = ()
+    if props[0].choices:
+        common = set(props[0].choices)
+        for p in props[1:]:
+            common &= set(p.choices)
+        # 순서는 첫 것을 따른다. 집합 순서를 쓰면 실행마다 달라진다.
+        choices = tuple(c for c in props[0].choices if c in common)
+        if not choices:
+            return None
+
+    def pick(attr, fn):
+        vals = [getattr(p, attr) for p in props if getattr(p, attr) is not None]
+        return fn(vals) if vals else None
+
+    return Prop(name=props[0].name, kind=props[0].kind,
+                label=min((p.label for p in props), key=lambda s: (len(s), s)),
+                choices=choices,
+                lo=pick("lo", max), hi=pick("hi", min), step=pick("step", min))
+
+
+def common_props(kinds) -> list[Prop]:
+    """여러 종류가 함께 가진 속성. 순서는 첫 종류를 따른다.
+
+    여러 요소를 함께 고쳤을 때 어느 하나에만 있는 속성을 보여주면, 바꿔도
+    일부에만 먹는다. 교집합만 내주면 화면에 보이는 것이 곧 전부에 적용된다.
+    """
+    kinds = list(dict.fromkeys(kinds))
+    if not kinds:
+        return []
+    if len(kinds) == 1:
+        return props_for(kinds[0])
+
+    tables = [{p.name: p for p in props_for(k)} for k in kinds]
+    shared = set(tables[0])
+    for t in tables[1:]:
+        shared &= set(t)
+
+    out = []
+    for prop in props_for(kinds[0]):
+        if prop.name not in shared:
+            continue
+        merged = _merge([t[prop.name] for t in tables])
+        if merged is not None:
+            out.append(merged)
+    return out
+
+
 def primary_props(kind: str) -> list[Prop]:
     """미니 툴바용 축약 목록. 순서는 PRIMARY에 적은 대로."""
     by_name = {p.name: p for p in REGISTRY.get(kind, [])}

@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 import pytest
 
 from figtune.core import parse
+from figtune.core import props as P
 from figtune.core import selector as sel
 from figtune.core.session import Session
 from figtune.core.spec import Spec, pyify
@@ -426,14 +427,40 @@ def test_command_extra_is_redone_in_order():
                     ("ax0.legend", "bbox_to_anchor", [0.5, 0.5])]
 
 
-def test_commands_with_extras_never_collapse():
-    """합쳐지면 딸린 변경 하나가 조용히 사라진다."""
+def test_merging_never_drops_an_attached_change():
+    """합치더라도 딸린 변경이 사라지면 안 된다.
+
+    한때는 extra가 있으면 아예 합치지 않는 것으로 이 위험을 피했다. 그러면
+    여러 대상을 함께 고칠 때 슬라이더를 끄는 동안 칸이 폭발하므로, 지금은
+    합치되 딸린 변경의 값도 짝지어 옮긴다.
+    """
+    from figtune.core.history import Command, History
+
+    seen = []
+    h = History(lambda p, n, v: seen.append((p, n, v)))
+    for width in (1.0, 2.0):
+        h.push(Command("ax0.line0", "linewidth", None, width,
+                       extra=[Command("ax0.line1", "linewidth", None, width)]))
+    assert len(h) == 1
+
+    h.undo()
+    assert set(seen) == {("ax0.line0", "linewidth", None),
+                         ("ax0.line1", "linewidth", None)}
+    seen.clear()
+    h.redo()
+    # 마지막 값이 살아 있어야 한다 — 첫 값으로 되돌아가면 안 된다
+    assert set(seen) == {("ax0.line0", "linewidth", 2.0),
+                         ("ax0.line1", "linewidth", 2.0)}
+
+
+def test_different_shapes_never_merge():
+    """건드리는 대상이 다르면 별개의 조작이다."""
     from figtune.core.history import Command, History
 
     h = History(lambda *a: None)
-    for anchor in ([0.4, 0.4], [0.6, 0.6]):
-        h.push(Command("ax0.legend", "bbox_to_anchor", None, anchor,
-                       extra=[Command("ax0.legend", "loc", None, "upper left")]))
+    h.push(Command("ax0.line0", "linewidth", None, 1.0,
+                   extra=[Command("ax0.line1", "linewidth", None, 1.0)]))
+    h.push(Command("ax0.line0", "linewidth", 1.0, 2.0))
     assert len(h) == 2
 
 
@@ -503,3 +530,108 @@ def test_panel_labels_are_one_undo_step(session):
     assert all(session.spec.text_by_id(t) is not None for t in ids)
     # 서식도 함께 돌아온다
     assert session.spec.text_by_id(ids[0]).fontweight == "bold"
+
+
+# --- 여러 종류의 공통 속성 ---------------------------------------------------
+
+def test_common_props_of_one_kind_is_that_kind():
+    assert P.common_props(["line"]) == P.props_for("line")
+
+
+def test_common_props_keeps_only_what_both_have():
+    names = {p.name for p in P.common_props(["line", "spine"])}
+    assert {"color", "linewidth"} <= names
+    assert "marker" not in names          # spine에는 없다
+    assert "position_outward" not in names  # line에는 없다
+
+
+def test_common_props_takes_the_shortest_label():
+    """'선 두께'와 '두께'가 섞이면 짧은 쪽을 쓴다.
+
+    짧은 쪽이 대개 더 일반적인 말이라 여러 종류를 아우르는 표시로 자연스럽고,
+    규칙이 결정적이라 고른 순서에 따라 화면이 달라지지 않는다.
+    """
+    by_name = {p.name: p for p in P.common_props(["line", "spine"])}
+    assert by_name["linewidth"].label == "두께"
+    assert by_name["color"].label == "색"
+    # 순서를 뒤집어도 같아야 한다
+    flipped = {p.name: p for p in P.common_props(["spine", "line"])}
+    assert flipped["linewidth"].label == "두께"
+
+
+def test_common_props_narrows_the_range():
+    """한쪽에서 무효인 값을 넣을 수 있으면 교집합이 아니다."""
+    line = next(p for p in P.props_for("line") if p.name == "linewidth")
+    spine = next(p for p in P.props_for("spine") if p.name == "linewidth")
+    got = next(p for p in P.common_props(["line", "spine"])
+               if p.name == "linewidth")
+    assert got.hi == min(line.hi, spine.hi)
+    assert got.lo == max(line.lo, spine.lo)
+
+
+def test_common_props_intersects_choices():
+    got = next(p for p in P.common_props(["line", "grid"])
+               if p.name == "linestyle")
+    assert set(got.choices) <= set(P.LINESTYLES)
+    assert got.choices, "선 종류가 통째로 사라졌습니다"
+
+
+def test_common_props_drops_mismatched_widget_kinds():
+    """이름이 같아도 위젯 종류가 다르면 하나로 그릴 수 없다."""
+    for prop in P.common_props(["line", "coll"]):
+        kinds = {q.kind for k in ("line", "coll")
+                 for q in P.props_for(k) if q.name == prop.name}
+        assert len(kinds) == 1
+
+
+def test_common_props_of_nothing_is_empty():
+    assert P.common_props([]) == []
+
+
+# --- 여러 대상에 한 번에 적용 -------------------------------------------------
+
+def test_set_props_applies_to_every_target(session):
+    session.set_props(["ax0.line0", "ax0.line1"], "linewidth", 3.0)
+    assert session.spec.get("ax0.line0", "linewidth") == 3.0
+    assert session.spec.get("ax0.line1", "linewidth") == 3.0
+
+
+def test_set_props_is_one_undo_step(session):
+    """세 개를 함께 고쳤으면 되돌리는 것도 한 번이어야 한다.
+
+    대상마다 쌓이면 실행 취소가 일부만 되돌려, 함께 고른 것들이 서로 다른
+    값으로 갈라진 채 남는다.
+    """
+    steps = len(session.history)
+    session.set_props(["ax0.line0", "ax0.line1"], "linewidth", 3.0)
+    assert len(session.history) - steps == 1
+
+    session.history.undo()
+    assert session.spec.get("ax0.line0", "linewidth") is None
+    assert session.spec.get("ax0.line1", "linewidth") is None
+
+
+def test_dragging_a_slider_over_many_stays_one_step(session):
+    """슬라이더를 끄는 동안 값이 여러 번 들어와도 한 칸이다.
+
+    마우스 이동마다 쌓이면 실행 취소 한 번이 1픽셀을 되돌린다. 단일 선택은
+    이미 그랬는데, 부수 변경이 딸린 커맨드는 합쳐지지 않아 여러 선택에서만
+    칸이 폭발했다.
+    """
+    paths = ["ax0.line0", "ax0.line1"]
+    steps = len(session.history)
+    for w in (1.0, 1.5, 2.0, 2.5):
+        session.set_props(paths, "linewidth", w)
+    assert len(session.history) - steps == 1
+
+    session.history.undo()
+    assert session.spec.get("ax0.line0", "linewidth") is None
+
+
+def test_set_props_records_each_targets_own_old_value(session):
+    """되돌릴 값은 대상마다 다르다. 하나로 뭉뚱그리면 남의 값이 들어간다."""
+    session.set_prop("ax0.line0", "linewidth", 5.0)
+    session.set_props(["ax0.line0", "ax0.line1"], "linewidth", 1.0)
+    session.history.undo()
+    assert session.spec.get("ax0.line0", "linewidth") == 5.0
+    assert session.spec.get("ax0.line1", "linewidth") is None

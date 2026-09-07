@@ -231,15 +231,32 @@ class Session:
         return self.spec.of(path).get(name, None)
 
     def set_prop(self, path: str, name: str, value: Any, record: bool = True) -> None:
-        kind = sel.parse(path).kind
-        # 값은 spec에 들어가기 전에 정규형으로 접힌다. 여기서 하지 않으면
-        # '-'와 'solid'가 서로 다른 override로 남는다.
-        value = canon.value(kind, name, value)
-        old = self.recorded_value(path, name)
-        self._apply_raw(path, name, value)
+        self.set_props([path], name, value, record=record)
+
+    def set_props(self, paths, name: str, value: Any,
+                  record: bool = True) -> None:
+        """여러 대상의 같은 속성을 한 번에 바꾼다. 실행 취소는 한 칸이다.
+
+        대상마다 쌓이면 실행 취소가 일부만 되돌려, 함께 고른 것들이 서로
+        다른 값으로 갈라진 채 남는다.
+        """
+        cmds = []
+        for path in paths:
+            # 값은 spec에 들어가기 전에 정규형으로 접힌다. 여기서 하지 않으면
+            # '-'와 'solid'가 서로 다른 override로 남는다. 종류마다 접는
+            # 방식이 다를 수 있으므로 대상별로 한다.
+            folded = canon.value(sel.parse(path).kind, name, value)
+            # 되돌릴 값은 대상마다 다르다. 하나로 뭉뚱그리면 남의 값이 들어간다.
+            cmds.append(Command(path, name,
+                                self.recorded_value(path, name), folded))
+            self._apply_raw(path, name, folded)
+        if not cmds:
+            return
         canon.light(self.spec)          # 편집 결과도 정규형을 유지한다
         if record:
-            self.history.push(Command(path, name, old, value))
+            head = cmds[0]
+            self.history.push(Command(head.path, head.prop, head.old, head.new,
+                                      extra=cmds[1:]))
         self.dirty = True
 
     def reset_prop(self, path: str, name: str) -> None:

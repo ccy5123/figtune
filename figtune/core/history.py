@@ -38,12 +38,21 @@ class History:
         self._sealed = False
         self.depth = depth
 
+    @staticmethod
+    def _shape(cmd: Command) -> tuple:
+        """무엇을 건드리는 커맨드인가. 합칠 수 있는지 가르는 기준."""
+        return tuple((c.path, c.prop) for c in [cmd, *cmd.extra])
+
     def push(self, cmd: Command) -> None:
-        # 같은 속성을 연속으로 만지면 (슬라이더 드래그) 하나로 합친다
-        if self._undo and not self._sealed and not cmd.extra:
+        # 같은 것을 연속으로 만지면 (슬라이더 드래그) 하나로 합친다.
+        # 부수 변경까지 함께 본다 — 여러 대상을 함께 고칠 때도 슬라이더를
+        # 끄는 동안 칸이 쌓이면 실행 취소 한 번이 1픽셀을 되돌린다.
+        if self._undo and not self._sealed:
             last = self._undo[-1]
-            if last.path == cmd.path and last.prop == cmd.prop and not last.extra:
+            if self._shape(last) == self._shape(cmd):
                 last.new = cmd.new
+                for a, b in zip(last.extra, cmd.extra):
+                    a.new = b.new
                 self._redo.clear()
                 return
         self._sealed = False

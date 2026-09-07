@@ -1133,3 +1133,76 @@ def test_tree_multi_selection_reaches_the_window(win):
     for it in picks:
         it.setSelected(True)
     assert sorted(win.selection()) == ["ax0.title", "ax1.title"]
+
+
+# --- 교집합 properties -------------------------------------------------------
+
+def _labels(win):
+    return {name: prop.label for name, (prop, _w) in win.inspector._rows.items()}
+
+
+def test_inspector_shows_only_shared_properties(win):
+    win.select_paths(["ax0.line0", "ax0.spine:top"])
+    names = set(win.inspector._rows)
+    assert {"color", "linewidth"} <= names
+    assert "marker" not in names, "선에만 있는 속성이 떴습니다"
+
+
+def test_inspector_uses_the_shorter_label(win):
+    win.select_paths(["ax0.line0", "ax0.spine:top"])
+    assert _labels(win)["linewidth"] == "두께"
+
+
+def test_editing_applies_to_every_selected(win):
+    win.select_paths(["ax0.line0", "ax0.line1"])
+    win.inspector.edited.emit("linewidth", 3.5)
+    assert win.session.spec.get("ax0.line0", "linewidth") == 3.5
+    assert win.session.spec.get("ax0.line1", "linewidth") == 3.5
+
+
+def test_editing_many_is_one_undo_step(win):
+    win.select_paths(["ax0.line0", "ax0.line1"])
+    steps = len(win.session.history)
+    win.inspector.edited.emit("linewidth", 3.5)
+    assert len(win.session.history) - steps == 1
+    win.undo()
+    assert win.session.spec.get("ax0.line0", "linewidth") is None
+    assert win.session.spec.get("ax0.line1", "linewidth") is None
+
+
+def test_differing_values_are_not_invented(win):
+    """값이 갈리는 칸에 아무 값이나 채우면, 그것이 현재 값인 줄 알고
+    넘어가서 건드리지 않은 대상까지 그 값으로 덮인다."""
+    win.session.set_prop("ax0.line0", "linewidth", 1.0)
+    win.session.set_prop("ax0.line1", "linewidth", 4.0)
+    win.select_paths(["ax0.line0", "ax0.line1"])
+    _vals, mixed, _over = win._shared_values(["ax0.line0", "ax0.line1"])
+    assert "linewidth" in mixed
+
+    # 고르기만 해서는 아무것도 바뀌지 않는다
+    assert win.session.spec.get("ax0.line0", "linewidth") == 1.0
+    assert win.session.spec.get("ax0.line1", "linewidth") == 4.0
+
+
+def test_equal_values_are_shown_as_the_common_one(win):
+    win.session.set_prop("ax0.line0", "linewidth", 2.0)
+    win.session.set_prop("ax0.line1", "linewidth", 2.0)
+    vals, mixed, _over = win._shared_values(["ax0.line0", "ax0.line1"])
+    assert vals["linewidth"] == 2.0 and "linewidth" not in mixed
+
+
+def test_reset_clears_the_override_on_every_selected(win):
+    win.select_paths(["ax0.line0", "ax0.line1"])
+    win.inspector.edited.emit("linewidth", 3.5)
+    win.inspector.reset.emit("linewidth")
+    assert win.session.spec.get("ax0.line0", "linewidth") is None
+    assert win.session.spec.get("ax0.line1", "linewidth") is None
+
+
+def test_mixed_kinds_still_share_the_basics(win):
+    """선과 격자를 함께 골라도 색과 두께는 함께 바꿀 수 있어야 한다."""
+    win.select_paths(["ax0.line0", "ax0.grid.x"])
+    assert {"color", "linewidth", "linestyle"} <= set(win.inspector._rows)
+    win.inspector.edited.emit("color", "#123456")
+    assert win.session.spec.get("ax0.line0", "color") == "#123456"
+    assert win.session.spec.get("ax0.grid.x", "color") == "#123456"

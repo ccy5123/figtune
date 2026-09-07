@@ -172,6 +172,7 @@ MESSAGES = {
         "Keep the current zoom/pan as the axis range (xlim/ylim).",
     "보기가 축 범위와 같습니다.": "The view already matches the axis range.",
     "{n}개 선택됨": "{n} selected",
+    "고른 것들의 값이 서로 다릅니다": "The selected items have different values",
     "종이를 내용에 맞추지 못했습니다 ({n}번 시도). "
     "글자가 잘려 보이면 크기를 직접 조절하세요.":
         "Could not fit the paper to its content ({n} passes). "
