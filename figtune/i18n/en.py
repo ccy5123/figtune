@@ -172,6 +172,16 @@ MESSAGES = {
         "Keep the current zoom/pan as the axis range (xlim/ylim).",
     "보기가 축 범위와 같습니다.": "The view already matches the axis range.",
     "{n}개 선택됨": "{n} selected",
+    "패널": "panel",
+    "{where}를 해석하지 못했습니다: {err}": "could not parse {where}: {err}",
+    "{where}에 ax를 받는 {func}() 함수가 없습니다.":
+        "{where} has no {func}() function taking ax.",
+    "{where}가 __file__을 씁니다. 병합 파일 안으로 옮기면 그 값이 병합 "
+    "파일의 경로가 되어 다른 파일을 읽게 됩니다. 경로를 인자나 상수로 "
+    "바꾼 뒤 다시 시도하세요.":
+        "{where} uses __file__. Copied into the merge file that value becomes "
+        "the merge file's own path, so it would read the wrong file. Turn the "
+        "path into an argument or a constant and try again.",
     "{script}의 자리가 격자를 벗어납니다: ({r},{c}) {rs}x{cs} / 격자 {rows}x{cols}":
         "{script} falls outside the grid: ({r},{c}) {rs}x{cs} "
         "in a {rows}x{cols} grid",

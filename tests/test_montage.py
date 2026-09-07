@@ -396,3 +396,67 @@ def test_merged_figure_is_editable_as_a_whole(tmp_path):
     s.open(out)
     s.set_prop("ax0.title", "fontsize", 13.0)
     assert s.fig.axes[0].title.get_fontsize() == 13.0
+
+
+# --- 병합 결과는 그 파일 하나로 완결된다 --------------------------------------
+
+def test_merged_script_runs_without_the_panel_files(tmp_path):
+    """원본을 참조하면 파일을 옮기거나 이름을 바꾸는 순간 깨진다.
+
+    논문에 딸려 보낼 때도 폴더째 보내야 한다. 병합 파일 하나로 그림이
+    그려져야 한다.
+    """
+    import subprocess
+    import sys
+
+    for name in ("a", "b"):
+        (tmp_path / f"{name}.py").write_text(
+            FUNCFORM.format(ylab="C", title=name), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script="a.py"), PanelRef(script="b.py")])
+    merged = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    # 원본을 지운다 — 그래도 돌아야 한다
+    (tmp_path / "a.py").unlink()
+    (tmp_path / "b.py").unlink()
+
+    runner = tmp_path / "_run.py"
+    runner.write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport runpy\n"
+        f"ns = runpy.run_path({str(merged)!r})\n"
+        "assert len(ns['fig'].axes) == 2\n"
+        "assert ns['fig'].axes[0].get_title() == 'a'\n"
+        "assert ns['fig'].axes[1].get_title() == 'b'\n"
+        "print('ok')\n", encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(runner)], capture_output=True,
+                          text=True, cwd=str(tmp_path))
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_merged_script_has_no_reference_to_the_panels(tmp_path):
+    for name in ("a", "b"):
+        (tmp_path / f"{name}.py").write_text(
+            FUNCFORM.format(ylab="C", title=name), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script="a.py"), PanelRef(script="b.py")])
+    src = generate_subplot_script(
+        ms, tmp_path / "m.py", base_dir=tmp_path).read_text(encoding="utf-8")
+    assert "runpy" not in src
+    assert "a.py" not in src.split('"""')[2], "패널 경로가 코드에 남아 있습니다"
+
+
+def test_merged_script_is_still_editable_by_figtune(tmp_path):
+    for name in ("a", "b"):
+        (tmp_path / f"{name}.py").write_text(
+            FUNCFORM.format(ylab="C", title=name), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script="a.py"), PanelRef(script="b.py")])
+    merged = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(merged)
+    assert len(s.fig.axes) == 2
+    s.set_prop("ax0.line0", "color", "#c0392b")
+    s.save()
+    style = (tmp_path / "m_style.py").read_text(encoding="utf-8")
+    assert "set_color('#c0392b')" in style
