@@ -881,3 +881,71 @@ def test_the_demo_generator_builds_what_it_promises(tmp_path):
         PanelRef(script=str(a / "uptake.py")),
         PanelRef(script=str(b / "dose.py"))])
     assert len(data_warnings(ms, tmp_path / "paper", base_dir=tmp_path)) == 2
+
+
+# --- 중첩된 폴더 (a 안에 b) ----------------------------------------------------
+#
+# 나란한 폴더든 중첩된 폴더든 결과는 같다. 상대 경로는 병합 파일이 있는
+# 폴더에서 풀리므로, 데이터가 두 곳에 나뉘어 있으면 어디에 두든 한쪽은
+# 반드시 깨진다. '안쪽에 두면 바깥도 보이지 않을까'가 통하지 않는다.
+
+@pytest.fixture
+def nested(tmp_path):
+    """a/ 안에 b/. 각자 자기 폴더의 데이터를 상대 경로로 읽는다."""
+    a = tmp_path / "a"
+    b = a / "b"
+    b.mkdir(parents=True)
+    (a / "data_a.csv").write_text("x,y\n0,0\n1,2\n", encoding="utf-8")
+    (b / "data_b.csv").write_text("x,y\n0,1\n1,3\n", encoding="utf-8")
+    (a / "code_a.py").write_text(
+        READS_LOCAL.format(data="data_a.csv", title="A"), encoding="utf-8")
+    (b / "code_b.py").write_text(
+        READS_LOCAL.format(data="data_b.csv", title="B"), encoding="utf-8")
+    return tmp_path, a, b
+
+
+def _nested_spec(a, b):
+    return MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script=str(a / "code_a.py")),
+        PanelRef(script=str(b / "code_b.py"))])
+
+
+def test_saving_in_the_outer_folder_breaks_the_inner_one(nested):
+    root, a, b = nested
+    warns = data_warnings(_nested_spec(a, b), a, base_dir=root)
+    assert len(warns) == 1 and "code_b.py" in warns[0]
+
+    out = generate_subplot_script(_nested_spec(a, b), a / "m.py", base_dir=root)
+    with pytest.raises(FileNotFoundError):
+        Session().open(out)
+
+
+def test_saving_in_the_inner_folder_breaks_the_outer_one(nested):
+    """안쪽에 두면 바깥이 보이지 않을까 — 통하지 않는다."""
+    root, a, b = nested
+    warns = data_warnings(_nested_spec(a, b), b, base_dir=root)
+    assert len(warns) == 1 and "code_a.py" in warns[0]
+
+
+def test_saving_outside_both_breaks_both(nested):
+    root, a, b = nested
+    assert len(data_warnings(_nested_spec(a, b), root, base_dir=root)) == 2
+
+
+def test_absolute_paths_work_from_every_folder(nested):
+    """해법이 중첩에서도 통해야 한다."""
+    root, a, b = nested
+    (a / "code_a.py").write_text(
+        READS_LOCAL.format(data=str(a / "data_a.csv"), title="A"),
+        encoding="utf-8")
+    (b / "code_b.py").write_text(
+        READS_LOCAL.format(data=str(b / "data_b.csv"), title="B"),
+        encoding="utf-8")
+    ms = _nested_spec(a, b)
+
+    for where in (a, b, root):
+        assert data_warnings(ms, where, base_dir=root) == []
+        out = generate_subplot_script(ms, where / "m.py", base_dir=root)
+        s = Session()
+        s.open(out)
+        assert [ax.get_title() for ax in s.fig.axes] == ["A", "B"]
