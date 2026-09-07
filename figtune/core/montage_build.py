@@ -212,6 +212,44 @@ def detect_plot_function(script: Path | str) -> str | None:
     return cands[0] if cands else None
 
 
+_AXES_MAKERS = ("subplots", "subplot", "add_subplot", "add_axes", "axes")
+
+
+def detect_projection(script: Path | str) -> str | None:
+    """이 패널이 원하는 투영('3d', 'polar', …). 평범한 2D면 None.
+
+    axes의 클래스는 만들 때 정해진다 — 3D는 Axes3D, polar는 PolarAxes다.
+    병합 격자가 평범한 Axes를 넘기면 3D 패널은 거기에 그릴 수 없고, 이미
+    만들어진 뒤에는 바꿀 방법이 없다. 그래서 미리 읽어 둔다.
+
+    보통 `__main__` 블록에 적혀 있다 — 패널이 단독 실행될 때 자기 축을
+    어떻게 만드는지가 곧 어떤 축을 원하는지다.
+    """
+    try:
+        tree = ast.parse(Path(script).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if getattr(node.func, "attr", getattr(node.func, "id", None)) \
+                not in _AXES_MAKERS:
+            continue
+        for kw in node.keywords:
+            if kw.arg == "projection" and isinstance(kw.value, ast.Constant):
+                return kw.value.value
+            if kw.arg == "polar" and getattr(kw.value, "value", None) is True:
+                return "polar"
+            # subplots는 subplot_kw로 한 겹 감싸서 받는다
+            if kw.arg == "subplot_kw" and isinstance(kw.value, ast.Dict):
+                for k, v in zip(kw.value.keys, kw.value.values):
+                    if (isinstance(k, ast.Constant) and k.value == "projection"
+                            and isinstance(v, ast.Constant)):
+                        return v.value
+    return None
+
+
 def panel_problem(script: Path | str) -> str | None:
     """이 스크립트를 합칠 수 없는 이유. 합칠 수 있으면 None.
 
@@ -253,6 +291,11 @@ import matplotlib.pyplot as plt
 # (row, col, rowspan, colspan) — same order as the panel functions below
 CELLS = {cells!r}
 
+# Each panel's projection, or None for an ordinary 2D axes. An axes' class is
+# fixed when it is created (Axes3D, PolarAxes, …), so a 3D panel needs the
+# right kind of axes from the start — it cannot be converted afterwards.
+PROJECTIONS = {projections!r}
+
 PANEL_LABELS = {labels!r}
 
 
@@ -262,15 +305,18 @@ PANELS = [{names}]
 
 fig = plt.figure(figsize=({w!r}, {h!r}))
 _gs = fig.add_gridspec({rows}, {cols})
-_axes = [fig.add_subplot(_gs[_r:_r + _rs, _c:_c + _cs])
-         for _r, _c, _rs, _cs in CELLS]
+_axes = [fig.add_subplot(_gs[_r:_r + _rs, _c:_c + _cs],
+                         **({{}} if _p is None else {{"projection": _p}}))
+         for (_r, _c, _rs, _cs), _p in zip(CELLS, PROJECTIONS)]
 
 for _draw, _ax in zip(PANELS, _axes):
     _draw(_ax)
 
 for _ax, _label in zip(_axes, PANEL_LABELS):
-    _ax.text(-0.15, 1.02, _label, transform=_ax.transAxes,
-             fontweight="bold", fontsize=11, va="bottom", ha="left")
+    # Axes3D.text takes (x, y, z, s); text2D is the 2D-in-axes-coords one.
+    _put = getattr(_ax, "text2D", None) or _ax.text
+    _put(-0.15, 1.02, _label, transform=_ax.transAxes,
+         fontweight="bold", fontsize=11, va="bottom", ha="left")
 
 fig.tight_layout()
 '''
@@ -292,7 +338,7 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
     """
     base = Path(base_dir).resolve()
     out = Path(out_path)
-    blocks, names, missing = [], [], []
+    blocks, names, projections, missing = [], [], [], []
 
     for i, ref in enumerate(mspec.panels):
         script, _ = ref.resolve(base)
@@ -304,6 +350,8 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
         blocks.append(inline.inline_panel(
             script.read_text(encoding="utf-8"), fn, name, label=script.name))
         names.append(name)
+        # 투영은 패널이 자기 축을 어떻게 만드는지에서 읽는다
+        projections.append(detect_projection(script))
 
     if missing:
         raise ValueError(_t(
@@ -318,7 +366,8 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
     labels = M.default_labels(len(names), mspec.label_template)
     out.write_text(MERGE_TEMPLATE.format(
         panels="\n\n".join(blocks), names=", ".join(names),
-        cells=mspec.placements(), labels=labels,
+        cells=mspec.placements(), projections=projections,
+        labels=labels,
         rows=mspec.rows, cols=mspec.cols,
         w=round(panel_size[0] * mspec.cols, 2),
         h=round(panel_size[1] * mspec.rows, 2)), encoding="utf-8")

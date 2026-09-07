@@ -18,6 +18,7 @@ from figtune.core import montage as M
 from figtune.core.montage_build import (MontageSpec, PanelRef, build,
                                         can_use_subplot_mode,
                                         detect_plot_function,
+                                        detect_projection,
                                         panel_problem,
                                         generate_subplot_script)
 from figtune.core.session import Session
@@ -490,3 +491,68 @@ def test_a_script_using_file_is_reported(tmp_path):
 
 def test_a_missing_file_is_reported(tmp_path):
     assert panel_problem(tmp_path / "nope.py")
+
+
+# --- 투영(3D · polar) --------------------------------------------------------
+#
+# axes의 클래스는 만들 때 정해진다. 병합 격자가 평범한 Axes를 넘기면 3D
+# 패널은 거기에 그릴 수 없다. 패널이 원하는 투영을 미리 읽어 그 종류로
+# 만들어 넘겨야 한다.
+
+THREE_D = """import matplotlib.pyplot as plt
+
+def plot(ax):
+    ax.plot([0, 1, 2], [0, 1, 4], [0, 2, 1])
+    ax.set_zlabel('z')
+
+if __name__ == '__main__':
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    plot(ax)
+"""
+
+
+@pytest.mark.parametrize("src,want", [
+    ("import matplotlib.pyplot as plt\n"
+     "fig, ax = plt.subplots()\n", None),
+    ("fig.add_subplot(111, projection='3d')\n", "3d"),
+    ("plt.subplots(subplot_kw={'projection': 'polar'})\n", "polar"),
+    ("plt.subplot(polar=True)\n", "polar"),
+])
+def test_detect_projection(tmp_path, src, want):
+    p = tmp_path / "s.py"
+    p.write_text(src, encoding="utf-8")
+    assert detect_projection(p) == want
+
+
+def test_a_3d_panel_gets_a_3d_axes(tmp_path):
+    """평범한 Axes를 넘기면 3D 패널은 거기에 그릴 수 없다."""
+    (tmp_path / "solid.py").write_text(THREE_D, encoding="utf-8")
+    (tmp_path / "flat.py").write_text(
+        FUNCFORM.format(ylab="C", title="flat"), encoding="utf-8")
+
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script="solid.py"), PanelRef(script="flat.py")])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    kinds = [type(ax).__name__ for ax in s.fig.axes]
+    assert kinds[0] == "Axes3D", f"3D 패널이 평범한 축에 놓였습니다: {kinds}"
+    assert kinds[1] == "Axes"
+
+
+def test_a_3d_panel_is_not_reported_as_a_problem(tmp_path):
+    p = tmp_path / "solid.py"
+    p.write_text(THREE_D, encoding="utf-8")
+    assert panel_problem(p) is None
+
+
+def test_the_panel_label_still_lands_on_a_3d_axes(tmp_path):
+    """(a)(b) 라벨은 transAxes로 놓는다 — 3D에서도 살아야 한다."""
+    (tmp_path / "solid.py").write_text(THREE_D, encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="solid.py")])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+    s = Session()
+    s.open(out)
+    assert any(t.get_text() == "(a)" for t in s.fig.axes[0].texts)
