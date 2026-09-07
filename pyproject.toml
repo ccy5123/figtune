@@ -4,12 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "figtune"
-version = "0.1.0"
+dynamic = ["version"]
 description = "matplotlib figure를 GUI로 미세조정하고 재현 가능한 코드로 남기는 도구"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = ["matplotlib>=3.7", "pyyaml>=6.0"]
+keywords = ["matplotlib", "figure", "gui", "plotting", "reproducible"]
+
+# Linux만 적는다. CI가 ubuntu 단독이라 다른 OS는 "아마 돌지만 아무도
+# 확인하지 않았다"가 정직한 상태다. macOS는 v3 예정.
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.urls]
+Homepage = "https://github.com/ccy5123/figtune"
+Repository = "https://github.com/ccy5123/figtune"
+Issues = "https://github.com/ccy5123/figtune/issues"
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.5"]
@@ -18,6 +40,10 @@ dev = ["pytest>=7", "python-pptx>=0.6.21", "PySide6>=6.5"]
 
 [project.scripts]
 figtune = "figtune.cli:main"
+
+[tool.setuptools.dynamic]
+# 버전은 figtune/__init__.py 한 곳에만 적는다.
+version = {attr = "figtune.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["figtune*"]
