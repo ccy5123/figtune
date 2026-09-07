@@ -261,12 +261,16 @@ def test_merge_cli_picks_a_sensible_grid(tmp_path, monkeypatch):
     assert main(["merge", "f0.py", "f1.py", "f2.py", "f3.py",
                  "-o", str(out)]) == 0
     src = out.read_text(encoding="utf-8")
-    assert "plt.subplots(2, 2" in src          # 4개 → 2×2
     assert "'(a)'" in src and "'(d)'" in src
 
+    # 격자 모양은 코드 문자열이 아니라 결과로 확인한다. 리터럴을 단언하면
+    # 템플릿을 고칠 때마다 뜻과 상관없이 깨진다.
     s = Session()
     s.open(out)
-    assert len(s.fig.axes) == 4
+    assert len(s.fig.axes) == 4                # 4개 → 2×2
+    xs = {round(ax.get_position().bounds[0], 3) for ax in s.fig.axes}
+    ys = {round(ax.get_position().bounds[1], 3) for ax in s.fig.axes}
+    assert len(xs) == 2 and len(ys) == 2
 
 
 def test_merge_cli_refuses_and_explains(tmp_path, monkeypatch, capsys):
@@ -296,3 +300,99 @@ def test_merge_cli_svg_fallback(tmp_path, monkeypatch):
                  "--svg", str(svg)]) == 0
     assert svg.exists() and svg.read_text(encoding="utf-8").startswith("<svg")
     assert not (tmp_path / "m.py").exists()    # 모드 B 산출물은 만들지 않았다
+
+
+# --- 칸 병합(span) ----------------------------------------------------------
+#
+# 균일 격자만으로는 논문 그림을 못 만든다. 3x2에서 2칸짜리 둘과 1칸짜리 둘
+# 같은 조합이 실제로 필요하다.
+
+def _spec(n, **kw):
+    return MontageSpec(panels=[PanelRef(script=f"f{i}.py") for i in range(n)],
+                       **kw)
+
+
+def test_unplaced_panels_fill_in_reading_order():
+    got = _spec(4, rows=2, cols=2).placements()
+    assert got == [(0, 0, 1, 1), (0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 1, 1)]
+
+
+def test_explicit_span_is_kept():
+    ms = _spec(0, rows=2, cols=3)
+    ms.panels = [PanelRef(script="a.py", row=0, col=0, colspan=2),
+                 PanelRef(script="b.py", row=0, col=2),
+                 PanelRef(script="c.py", row=1, col=0),
+                 PanelRef(script="d.py", row=1, col=1, colspan=2)]
+    assert ms.placements() == [(0, 0, 1, 2), (0, 2, 1, 1),
+                               (1, 0, 1, 1), (1, 1, 1, 2)]
+
+
+def test_unplaced_panels_go_around_a_span():
+    """자동 배치는 이미 차지된 칸을 건너뛴다."""
+    ms = _spec(0, rows=2, cols=2)
+    ms.panels = [PanelRef(script="wide.py", row=0, col=0, colspan=2),
+                 PanelRef(script="a.py"), PanelRef(script="b.py")]
+    assert ms.placements() == [(0, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1)]
+
+
+def test_overlapping_cells_are_refused():
+    ms = _spec(0, rows=2, cols=2)
+    ms.panels = [PanelRef(script="a.py", row=0, col=0, colspan=2),
+                 PanelRef(script="b.py", row=0, col=1)]
+    with pytest.raises(ValueError, match="겹칩"):
+        ms.placements()
+
+
+def test_a_span_outside_the_grid_is_refused():
+    ms = _spec(0, rows=2, cols=2)
+    ms.panels = [PanelRef(script="a.py", row=0, col=1, colspan=2)]
+    with pytest.raises(ValueError, match="벗어"):
+        ms.placements()
+
+
+def test_too_many_panels_for_the_grid_is_refused():
+    with pytest.raises(ValueError, match="칸이 모자"):
+        _spec(5, rows=2, cols=2).placements()
+
+
+def test_placement_survives_the_yaml_roundtrip(tmp_path):
+    ms = _spec(0, rows=2, cols=3)
+    ms.panels = [PanelRef(script="a.py", row=0, col=0, colspan=2),
+                 PanelRef(script="b.py", row=1, col=2, rowspan=1)]
+    p = tmp_path / "m.yaml"
+    ms.dump(p)
+    assert MontageSpec.load(p).placements() == ms.placements()
+
+
+def test_merge_script_honours_spans(tmp_path):
+    """2칸짜리 패널은 실제로 두 칸 너비로 그려져야 한다."""
+    for name in ("a", "b", "c"):
+        (tmp_path / f"{name}.py").write_text(
+            FUNCFORM.format(ylab="C", title=name), encoding="utf-8")
+    ms = MontageSpec(rows=2, cols=2, panels=[
+        PanelRef(script="a.py", row=0, col=0, colspan=2),
+        PanelRef(script="b.py", row=1, col=0),
+        PanelRef(script="c.py", row=1, col=1)])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    boxes = [ax.get_position().bounds for ax in s.fig.axes]
+    wide, narrow = boxes[0], boxes[1]
+    assert wide[2] > narrow[2] * 1.8, f"넓은 칸이 넓지 않습니다: {boxes}"
+
+
+def test_merged_figure_is_editable_as_a_whole(tmp_path):
+    """병합 결과는 진짜 Figure다 — 열어서 통째로 편집할 수 있어야 한다."""
+    for name in ("a", "b"):
+        (tmp_path / f"{name}.py").write_text(
+            FUNCFORM.format(ylab="C", title=name), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script="a.py", row=0, col=0),
+        PanelRef(script="b.py", row=0, col=1)])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    s.set_prop("ax0.title", "fontsize", 13.0)
+    assert s.fig.axes[0].title.get_fontsize() == 13.0

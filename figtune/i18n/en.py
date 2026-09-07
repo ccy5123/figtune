@@ -172,6 +172,13 @@ MESSAGES = {
         "Keep the current zoom/pan as the axis range (xlim/ylim).",
     "보기가 축 범위와 같습니다.": "The view already matches the axis range.",
     "{n}개 선택됨": "{n} selected",
+    "{script}의 자리가 격자를 벗어납니다: ({r},{c}) {rs}x{cs} / 격자 {rows}x{cols}":
+        "{script} falls outside the grid: ({r},{c}) {rs}x{cs} "
+        "in a {rows}x{cols} grid",
+    "{script}의 자리가 다른 패널과 겹칩니다: ({r},{c})":
+        "{script} overlaps another panel at ({r},{c})",
+    "격자 {rows}x{cols}에 패널 {n}개를 놓을 칸이 모자랍니다.":
+        "A {rows}x{cols} grid has no room for {n} panels.",
     "{n}개 이동 중": "moving {n}",
     "고른 것들의 값이 서로 다릅니다": "The selected items have different values",
     "종이를 내용에 맞추지 못했습니다 ({n}번 시도). "
