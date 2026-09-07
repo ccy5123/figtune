@@ -352,3 +352,49 @@ def test_values_are_plain_python_floats(fig):
     d2, _ = drag.begin(fig, target_at(fig, x, y, kind="text"), x, y)
     ch2 = drag.update(fig, d2, x + 10, y)
     assert all(type(v) is float for v in ch2.value)
+
+
+# --- 축 본체를 끌어 옮긴다 ---------------------------------------------------
+
+def test_layer_is_draggable(fig):
+    """축은 크기만 바꿀 수 있고 옮길 수는 없었다.
+
+    도형을 잡아 끌면 옮겨지는 것이 캔버스의 기본 기대다. 크기만 되고
+    이동이 안 되면 사용자는 '왜 이것만 안 되지'를 매번 겪는다.
+    """
+    t = hit.Target(kind="layer", path="ax0", label="ax0", axes=0, movable=True)
+    d, _ = drag.begin(fig, t, 100, 100)
+    assert d is not None and d.kind == "layer"
+
+
+def test_layer_does_not_jump_on_grab(fig):
+    ax = fig.axes[0]
+    before = [round(float(v), 4) for v in ax.get_position().bounds]
+    t = hit.Target(kind="layer", path="ax0", label="ax0", axes=0, movable=True)
+    d, _ = drag.begin(fig, t, 100, 100)
+    assert drag.update(fig, d, 100, 100).value == before
+
+
+def test_layer_move_keeps_its_size(fig):
+    """이동은 크기를 바꾸지 않는다. 폭이 함께 변하면 크기 조절과 구별되지 않는다."""
+    ax = fig.axes[0]
+    _x0, _y0, w, h = (round(float(v), 4) for v in ax.get_position().bounds)
+    t = hit.Target(kind="layer", path="ax0", label="ax0", axes=0, movable=True)
+    d, _ = drag.begin(fig, t, 100, 100)
+    ch = drag.update(fig, d, 160, 130)
+    assert ch.value[2] == w and ch.value[3] == h
+    assert ch.value[0] > _x0 and ch.value[1] > _y0
+
+
+def test_layer_move_is_in_figure_coordinates(fig):
+    """축 상자는 figure 좌표다. 축 좌표로 재면 커서와 다른 거리를 간다."""
+    t = hit.Target(kind="layer", path="ax0", label="ax0", axes=0, movable=True)
+    d, _ = drag.begin(fig, t, 100, 100)
+    ch = drag.update(fig, d, 100 + float(fig.bbox.width) / 10, 100)
+    assert ch.value[0] == pytest.approx(d.origin[0] + 0.1, abs=1e-3)
+
+
+def test_page_is_still_not_draggable(fig):
+    """종이 자체는 끌 대상이 아니다 — 크기는 인스펙터에서 정한다."""
+    t = hit.Target(kind="page", path="fig", label="fig")
+    assert drag.begin(fig, t, 0, 0)[0] is None

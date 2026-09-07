@@ -94,6 +94,8 @@ def begin(fig, target, x: float, y: float) -> tuple[Drag | None, list[Change]]:
         return None, []
     if target.kind == "resize":
         return _begin_resize(fig, target, x, y), []
+    if target.kind == "layer" and target.movable:
+        return _begin_layer(fig, target, x, y), []
     if target.kind == "legend":
         return _begin_legend(fig, target, x, y)
     if target.kind == "text":
@@ -107,6 +109,14 @@ def _begin_resize(fig, target, x, y) -> Drag | None:
     bounds = [float(v) for v in fig.axes[target.axes].get_position().bounds]
     return Drag("resize", target.path, (x, y), bounds,
                 axes=target.axes, handle=target.handle)
+
+
+def _begin_layer(fig, target, x, y) -> Drag | None:
+    """축 본체를 잡는다 — 크기는 그대로 두고 자리만 옮긴다."""
+    if target.axes is None:
+        return None
+    bounds = [float(v) for v in fig.axes[target.axes].get_position().bounds]
+    return Drag("layer", target.path, (x, y), bounds, axes=target.axes)
 
 
 def _begin_text(fig, target, x, y) -> Drag | None:
@@ -153,11 +163,29 @@ def update(fig, d: Drag, x: float, y: float) -> Change | None:
     d.moved = True
     if d.kind == "resize":
         return _update_resize(fig, d, x, y)
+    if d.kind == "layer":
+        return _update_layer(fig, d, x, y)
     tr = _transform(fig, d.path, d.axes)
     dx, dy = _delta(tr, d.start, x, y)
     prop = "bbox_to_anchor" if d.kind == "legend" else "position"
     return Change(d.path, prop,
                   [round(d.origin[0] + dx, 4), round(d.origin[1] + dy, 4)])
+
+
+def _update_layer(fig, d: Drag, x, y) -> Change | None:
+    """축 상자를 통째로 옮긴다.
+
+    축 상자는 figure 좌표다. transAxes로 재면 상자 자신의 크기를 단위로
+    삼게 되어 커서와 다른 거리를 간다. resize와 같은 방식으로 display를
+    figure 비율로 직접 환산한다.
+    """
+    dx = float(x - d.start[0]) / float(fig.bbox.width)
+    dy = float(y - d.start[1]) / float(fig.bbox.height)
+    x0, y0, w, h = d.origin
+    # 폭·높이는 손대지 않는다. 함께 변하면 이동과 크기 조절이 구별되지 않는다.
+    return Change(d.path, "position",
+                  [round(x0 + dx, 4), round(y0 + dy, 4),
+                   round(w, 4), round(h, 4)])
 
 
 def _update_resize(fig, d: Drag, x, y) -> Change | None:

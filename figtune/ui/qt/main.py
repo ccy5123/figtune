@@ -146,8 +146,16 @@ class Canvas(FigureCanvasQTAgg):
 
     # --- 클릭 -------------------------------------------------------------
 
+    def viewing(self) -> bool:
+        """툴바의 확대·이동이 켜져 있는가.
+
+        관찰 도구와 편집은 완전히 별개다. 켜져 있는 동안 편집 제스처를
+        함께 처리하면, 들여다보려고 끈 것만으로 축이 옮겨져 spec이 바뀐다.
+        """
+        return bool(getattr(self.win.toolbar, "mode", ""))
+
     def _press(self, event):
-        if event.button != 1:
+        if event.button != 1 or self.viewing():
             return
         if self.editor.active:
             self.editor.commit()        # 다른 곳을 누르면 확정된다
@@ -335,6 +343,10 @@ class Canvas(FigureCanvasQTAgg):
         self._drag = (d, before, extras)
 
     def _motion(self, event):
+        if self.viewing():
+            # 확대·이동 중에는 툴바가 자기 커서를 쓴다. 여기서 덮으면
+            # 편집할 수 있는 것처럼 보이는데 실제로는 아무 일도 없다.
+            return
         if self._pending is not None:
             target, x0, y0 = self._pending
             if abs(event.x - x0) + abs(event.y - y0) < DRAG_THRESHOLD:

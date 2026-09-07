@@ -312,7 +312,9 @@ def test_cursor_shows_what_can_be_done(win):
     cases = [
         (center(win, ax.title), Qt.SizeAllCursor),        # 열 십자 — 옮길 수 있다
         (center(win, ax.get_legend()), Qt.SizeAllCursor),
-        ((bb.x0 + 40, bb.y0 + 25), Qt.ArrowCursor),
+        # 축 본체도 잡아 옮길 수 있다. 한때 화살표였고, 그때는 끌어도 아무
+        # 일이 없었으니 정직했다.
+        ((bb.x0 + 40, bb.y0 + 25), Qt.SizeAllCursor),
     ]
     for (x, y), want in cases:
         move(win.canvas, x, y)
@@ -967,3 +969,79 @@ def test_mini_toolbar_returns_after_a_usertext_drag(win):
     x, y = center(win, art)
     drag(win.canvas, x, y, x + 80, y)
     assert win.canvas.bar.shown
+
+
+# --- 축 본체를 끌어 옮긴다 ---------------------------------------------------
+
+def test_dragging_the_plot_area_moves_the_axes(win):
+    """도형을 잡아 끌면 옮겨지는 것이 캔버스의 기본 기대다.
+
+    축은 크기만 바뀌고 이동이 안 돼서, 사용자는 '왜 이것만 안 되지'를
+    매번 겪었다.
+    """
+    fig = win.session.fig
+
+    def size_in_inches():
+        # 축 상자는 figure 비율이다. 종이가 다시 맞춰지면 물리 크기가 같아도
+        # 비율은 바뀌므로, 크기 비교는 인치로 해야 뜻이 있다.
+        _x, _y, w, h = fig.axes[0].get_position().bounds
+        fw, fh = fig.get_size_inches()
+        return round(float(w * fw), 3), round(float(h * fh), 3)
+
+    ax = fig.axes[0]
+    before_x = round(float(ax.get_position().bounds[0]), 4)
+    before_size = size_in_inches()
+    bb = ax.get_window_extent()
+    x, y = bb.x0 + 40, bb.y0 + 25
+
+    drag(win.canvas, x, y, x + 50, y)
+    assert round(float(ax.get_position().bounds[0]), 4) > before_x, \
+        "축이 오른쪽으로 가지 않았습니다"
+    assert size_in_inches() == before_size, "크기가 함께 변했습니다"
+
+
+def test_moving_the_axes_is_one_undo_step(win):
+    ax = win.session.fig.axes[0]
+    before = [round(float(v), 4) for v in ax.get_position().bounds]
+    steps = len(win.session.history)
+    bb = ax.get_window_extent()
+    x, y = bb.x0 + 40, bb.y0 + 25
+
+    drag(win.canvas, x, y, x + 50, y)
+    assert len(win.session.history) - steps == 1
+    win.undo()
+    assert [round(float(v), 4) for v in ax.get_position().bounds] == before
+
+
+def test_pan_mode_does_not_move_the_axes(win):
+    """확대·이동은 관찰 도구다 — spec을 건드리면 안 된다.
+
+    가드가 없으면 pan 중에 화면도 움직이고 축도 옮겨져, 툴바로 들여다본
+    것만으로 그림의 배치가 바뀐다.
+    """
+    ax = win.session.fig.axes[0]
+    before = [round(float(v), 4) for v in ax.get_position().bounds]
+    win.toolbar.pan()
+    try:
+        bb = ax.get_window_extent()
+        x, y = bb.x0 + 40, bb.y0 + 25
+        drag(win.canvas, x, y, x + 50, y)
+        assert [round(float(v), 4) for v in ax.get_position().bounds] == before
+        assert win.session.spec.of("ax0").get("position") is None
+    finally:
+        win.toolbar.pan()
+
+
+def test_pan_mode_leaves_the_cursor_to_the_toolbar(win):
+    """확대·이동 중에 편집 커서를 덮으면 할 수 있는 일을 잘못 알린다."""
+    from PySide6.QtCore import Qt
+
+    ax = win.session.fig.axes[0]
+    bb = ax.get_window_extent()
+    win.canvas.setCursor(Qt.ArrowCursor)
+    win.toolbar.pan()
+    try:
+        move(win.canvas, bb.x0 + 40, bb.y0 + 25)
+        assert win.canvas.cursor().shape() != Qt.SizeAllCursor
+    finally:
+        win.toolbar.pan()

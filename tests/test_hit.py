@@ -198,9 +198,14 @@ def test_cursor_over_text_is_move(fig):
                          (bb.y0 + bb.y1) / 2) == hit.MOVE
 
 
-def test_cursor_over_empty_layer_is_arrow(fig):
+def test_cursor_over_empty_layer_is_move(fig):
+    """축 본체는 잡아 옮길 수 있다 — 커서가 그렇다고 말해야 한다.
+
+    한때 화살표였다. 끌어도 아무 일이 없었으니 정직한 커서였지만, 이동을
+    붙인 뒤로는 할 수 있는 일을 숨기는 것이 된다.
+    """
     bb = fig.axes[0].get_window_extent()
-    assert hit.cursor_at(fig, bb.x0 + 20, bb.y0 + 10) == hit.ARROW
+    assert hit.cursor_at(fig, bb.x0 + 20, bb.y0 + 10) == hit.MOVE
 
 
 def test_cursor_on_selected_corner_is_diagonal(fig):

@@ -294,7 +294,8 @@ def _build_axes(fig, ax, ax_i, r) -> _AxesMap:
     return _AxesMap(index=ax_i, box=box, legend=legend, texts=tuple(texts),
                     axis=tuple(_build_axis_regions(ax, ax_i, r)),
                     layer=Target(kind="layer", path=sel.axes(ax_i),
-                                 label=sel.axes(ax_i), axes=ax_i))
+                                 label=sel.axes(ax_i), axes=ax_i,
+                                 cursor=MOVE, movable=True))
 
 
 def _build_axis_regions(ax, ax_i, r) -> list[Region]:
