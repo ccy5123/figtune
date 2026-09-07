@@ -51,6 +51,36 @@ def _subplots_count(node) -> int:
     return max(1, total)
 
 
+def _subplots_shape(node) -> tuple[int, int]:
+    """plt.subplots(...)가 만드는 격자 모양 (행, 열)."""
+    kw = {k.arg: k.value for k in node.keywords}
+    pos = [a.value for a in node.args if isinstance(a, ast.Constant)]
+
+    def pick(i, name):
+        v = kw.get(name)
+        if isinstance(v, ast.Constant) and isinstance(v.value, int):
+            return v.value
+        return pos[i] if len(pos) > i and isinstance(pos[i], int) else 1
+
+    return max(1, pick(0, "nrows")), max(1, pick(1, "ncols"))
+
+
+def axes_shape(source: str) -> tuple[int, int]:
+    """이 스크립트가 만드는 축 격자의 모양. 못 읽으면 (1, 1).
+
+    영역을 이 모양으로 다시 나눠 그 축들을 건네면, 2패널 스크립트가 두 칸을
+    차지하면서도 본문을 그대로 쓸 수 있다.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return (1, 1)
+    for node in ast.walk(tree):
+        if _call_name(node) == "subplots":
+            return _subplots_shape(node)
+    return (1, 1)
+
+
 def axes_count(source: str) -> int:
     """이 스크립트가 만드는 축의 개수. 하나도 안 만들면 1(gca)로 본다.
 
@@ -118,8 +148,13 @@ def _drop_lines(tree) -> set[int]:
     return drop
 
 
-def wrap_source(source: str, func: str = "plot") -> str:
+def wrap_source(source: str, func: str = "plot",
+                allow_multi: bool = False) -> str:
     """스크립트를 `def plot(ax):` 하나로 감싼다.
+
+    축을 여러 개 만드는 스크립트는 기본적으로 거부한다. allow_multi를 켜면
+    `def plot(axs):` 형태로 감싸고, 축을 받던 이름이 넘겨받은 **목록**을
+    가리키게 한다 — 부르는 쪽이 그만큼의 칸을 준비했을 때만 쓴다.
 
     돌려주는 것은 함수 정의 문자열이다. inline_panel과 달리 호출은 붙이지
     않는다 — 감싼 것 자체가 그 함수이기 때문이다.
@@ -133,7 +168,8 @@ def wrap_source(source: str, func: str = "plot") -> str:
         raise WrapError(_t("이미 ax를 받는 함수가 있습니다 — 감쌀 필요가 없습니다."))
 
     n = axes_count(source)
-    if n > 1:
+    multi = n > 1
+    if multi and not allow_multi:
         raise WrapError(_t(
             "축을 {n}개 만드는 스크립트입니다. 한 칸에 진짜 축으로 넣을 수 "
             "없습니다 — 칸 {n}개를 차지하게 하거나, 패널마다 파일을 나누세요.",
@@ -152,16 +188,23 @@ def wrap_source(source: str, func: str = "plot") -> str:
     # 축을 받던 이름이 넘겨받은 축을 가리키게 한다. 이름이 없으면(상태 기반)
     # pyplot의 현재 축을 그것으로 돌려 plt.plot(...)이 여기에 그리게 한다.
     name = _axes_name(tree)
-    head = [f"def {func}(ax):"]
-    # 자기 이름으로 가져온다. 본문에도 `import ... as plt`가 있으면 그 이름은
-    # 함수의 지역이 되어, 그 줄보다 먼저 쓰면 UnboundLocalError가 난다.
     # 생성되는 코드는 영어다. 사용자 언어에 따라 파일 바이트가 달라지면
     # 정규형의 결정성이 깨지고 사람마다 다른 diff가 나온다.
-    head.append("    import matplotlib.pyplot as _plt")
-    head.append("    _plt.sca(ax)         "
-                "# so bare plt.plot(...) draws here too")
-    # 본문이 fig를 쓰는 경우가 흔하다 (tight_layout, suptitle …)
-    head.append("    fig = ax.figure")
-    if name and name != "ax":
-        head.append(f"    {name} = ax")
+    if multi:
+        # 축을 받던 이름이 넘겨받은 목록을 가리키게 한다. axes[0]·axes[1]이
+        # 우리가 만든 축이 된다.
+        head = [f"def {func}(axs):", "    fig = axs[0].figure"]
+        if name and name != "axs":
+            head.append(f"    {name} = axs")
+    else:
+        # _plt는 자기 이름으로 가져온다. 본문에도 `import ... as plt`가 있으면
+        # 그 이름은 함수의 지역이 되어, 그 줄보다 먼저 쓰면 UnboundLocalError다.
+        head = [f"def {func}(ax):",
+                "    import matplotlib.pyplot as _plt",
+                "    _plt.sca(ax)         "
+                "# so bare plt.plot(...) draws here too",
+                # 본문이 fig를 쓰는 경우가 흔하다 (tight_layout, suptitle …)
+                "    fig = ax.figure"]
+        if name and name != "ax":
+            head.append(f"    {name} = ax")
     return "\n".join(head) + "\n" + body + "\n"

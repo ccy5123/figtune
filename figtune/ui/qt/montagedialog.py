@@ -245,14 +245,23 @@ class MontageDialog(QDialog):
         합칠 수 없다는 것을 칸을 다 채우고 나서 알면 늦다. 목록에서 바로
         보이고, 왜 안 되는지도 함께 나온다.
         """
-        from ...core.montage_build import panel_problem
+        from ...core.montage_build import panel_cells, panel_problem
 
         out = []
         for doc in self.win.documents():
             if doc.session.script is None:
                 continue
             path = str(doc.session.script)
-            out.append((doc.name, path, panel_problem(path)))
+            problem = panel_problem(path)
+            if problem is None:
+                # 이미 여러 패널짜리면 그만큼의 자리가 필요하다. 놓기 전에
+                # 알아야 좁은 칸에 밀어 넣고 나서 눈치채는 일이 없다.
+                r, c = panel_cells(path)
+                name = doc.name if (r, c) == (1, 1) else \
+                    _t("{name} — {r}x{c} 칸 권장", name=doc.name, r=r, c=c)
+            else:
+                name = doc.name
+            out.append((name, path, problem))
         return out
 
     def _choose_for(self, index: int):

@@ -16,7 +16,8 @@ matplotlib.use("Agg")
 
 import pytest
 
-from figtune.core.autowrap import WrapError, axes_count, wrap_source
+from figtune.core.autowrap import (WrapError, axes_count, axes_shape,
+                                   wrap_source)
 
 PLAIN = '''"""제목 없는 스크립트."""
 import matplotlib.pyplot as plt
@@ -145,3 +146,76 @@ def test_a_script_that_already_has_plot_is_left_alone():
            "def plot(ax):\n    ax.plot([0, 1], [0, 1])\n")
     with pytest.raises(WrapError, match="이미"):
         wrap_source(src)
+
+
+# --- 여러 축을 만드는 스크립트 -------------------------------------------------
+#
+# 한 칸에 진짜 축으로 넣을 수는 없지만, 여러 칸을 주고 그 안을 스크립트
+# 자신의 격자로 나누면 된다. 본문은 여전히 손대지 않는다.
+
+MULTI = '''"""2패널 스크립트."""
+import matplotlib.pyplot as plt
+
+LW = 2.0
+
+fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+axes[0].plot([0, 1], [0, 1], lw=LW)
+axes[0].set_title('left')
+axes[1].plot([0, 1], [1, 0], lw=LW)
+axes[1].set_title('right')
+plt.show()
+'''
+
+
+@pytest.mark.parametrize("src,want", [
+    ("fig, ax = plt.subplots()\n", (1, 1)),
+    ("fig, axes = plt.subplots(1, 2)\n", (1, 2)),
+    ("fig, axes = plt.subplots(2, 3)\n", (2, 3)),
+    ("fig, axes = plt.subplots(3)\n", (3, 1)),
+    ("fig, axes = plt.subplots(nrows=2, ncols=2)\n", (2, 2)),
+])
+def test_axes_shape(src, want):
+    assert axes_shape(src) == want
+
+
+def test_multi_wrap_takes_a_list():
+    out = wrap_source(MULTI, allow_multi=True)
+    assert out.startswith("def plot(axs):")
+    assert "axes = axs" in out
+
+
+def test_multi_wrap_drops_the_figure_line():
+    out = wrap_source(MULTI, allow_multi=True)
+    assert "plt.subplots" not in out
+    assert "plt.show" not in out
+
+
+def test_multi_wrap_keeps_the_body():
+    out = wrap_source(MULTI, allow_multi=True)
+    assert "axes[0].set_title('left')" in out
+    assert "LW = 2.0" in out
+
+
+def test_the_multi_wrapped_panel_draws_into_the_given_axes(tmp_path):
+    merged = tmp_path / "m.py"
+    merged.write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n\n"
+        + wrap_source(MULTI, allow_multi=True) + "\n\n"
+        "fig = plt.figure()\n"
+        "gs = fig.add_gridspec(1, 2)\n"
+        "axs = [fig.add_subplot(gs[0, i]) for i in range(2)]\n"
+        "plot(axs)\n"
+        "assert [a.get_title() for a in axs] == ['left', 'right']\n"
+        "assert axs[0].lines[0].get_linewidth() == 2.0\n"
+        "assert len(fig.axes) == 2, fig.axes\n"
+        "print('ok')\n", encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(merged)], capture_output=True,
+                          text=True, cwd=str(tmp_path))
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_multi_is_still_refused_unless_asked(MULTI=MULTI):
+    """기본은 거부다 — 부르는 쪽이 칸을 준비했을 때만 감싼다."""
+    with pytest.raises(WrapError, match="2개"):
+        wrap_source(MULTI)

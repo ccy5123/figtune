@@ -272,14 +272,16 @@ def test_unmergeable_tabs_are_shown_with_the_reason(composer, tmp_path):
     """
     w, dlg, _s = composer
     plain = tmp_path / "plain.py"
-    plain.write_text("import matplotlib.pyplot as plt\n"
-                     "fig, axes = plt.subplots(1, 2)\n"
-                     "axes[0].plot([0, 1], [0, 1])\n", encoding="utf-8")
+    plain.write_text("from pathlib import Path\n"
+                     "import matplotlib.pyplot as plt\n"
+                     "D = Path(__file__).parent / 'd.csv'\n"
+                     "fig, ax = plt.subplots()\n"
+                     "ax.plot([0, 1], [0, 1])\n", encoding="utf-8")
     w.open_document(plain)
 
     by_name = {n: why for n, _p, why in dlg.candidates()}
     assert by_name["wide.py"] is None
-    assert "2개" in by_name["plain.py"]
+    assert "__file__" in by_name["plain.py"]
 
 
 def test_placing_an_unmergeable_script_is_refused(composer, tmp_path, monkeypatch):
@@ -287,8 +289,10 @@ def test_placing_an_unmergeable_script_is_refused(composer, tmp_path, monkeypatc
 
     _w, dlg, _s = composer
     plain = tmp_path / "plain.py"
-    plain.write_text("import matplotlib.pyplot as plt\n"
-                     "fig, axes = plt.subplots(2, 2)\n", encoding="utf-8")
+    plain.write_text("from pathlib import Path\n"
+                     "import matplotlib.pyplot as plt\n"
+                     "D = Path(__file__).parent\n"
+                     "fig, ax = plt.subplots()\n", encoding="utf-8")
     monkeypatch.setattr(QMessageBox, "warning",
                         staticmethod(lambda *a, **k: None))
 

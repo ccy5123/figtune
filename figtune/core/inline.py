@@ -68,11 +68,15 @@ def _defines(tree, name: str) -> bool:
     return False
 
 
-def inline_panel(source: str, func: str, name: str, label: str = "") -> str:
+def inline_panel(source: str, func: str, name: str, label: str = "",
+                 arg: str = "ax") -> str:
     """패널 소스를 `def {name}(ax):` 블록 하나로 만든다.
 
     func는 ax를 받는 함수 이름(보통 plot)이다. 감싼 함수의 마지막 줄에서
     그것을 호출하므로, 호출부는 {name}(ax) 하나만 알면 된다.
+
+    arg는 받는 이름이다. 축을 여러 개 쓰는 패널에는 목록을 건네므로 axs가
+    된다 — 이름이 곧 하나인지 여럿인지를 말한다.
     """
     where = label or _t("패널")
     try:
@@ -110,4 +114,4 @@ def inline_panel(source: str, func: str, name: str, label: str = "") -> str:
     body = "\n".join(("    " + ln) if ln.strip() else "" for ln in kept)
     # 마지막 호출을 원문과 한 줄 떼어 놓는다. 붙어 있으면 옮겨 온 코드의
     # 일부인지 우리가 붙인 것인지 구별되지 않는다.
-    return f"def {name}(ax):\n{body}\n\n    {func}(ax)\n"
+    return f"def {name}({arg}):\n{body}\n\n    {func}({arg})\n"

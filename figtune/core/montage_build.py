@@ -261,9 +261,13 @@ def panel_block(source: str, label: str, name: str) -> str:
     tree_has_plot = detect_plot_function_source(source)
     if tree_has_plot:
         return inline.inline_panel(source, tree_has_plot, name, label=label)
-    wrapped = autowrap.wrap_source(source, func="_draw")
+    # 축을 여러 개 만드는 스크립트도 감싼다. 그런 패널에는 그만큼의 축을
+    # 목록으로 건네므로, 받는 이름이 ax가 아니라 axs가 된다.
+    wrapped = autowrap.wrap_source(source, func="_draw", allow_multi=True)
     # 감싼 것을 다시 인라인 규칙에 태운다 — __file__ 검사 등이 그대로 걸린다
-    return inline.inline_panel(wrapped + "\n", "_draw", name, label=label)
+    arg = "axs" if wrapped.startswith("def _draw(axs)") else "ax"
+    return inline.inline_panel(wrapped + "\n", "_draw", name,
+                               label=label, arg=arg)
 
 
 def detect_plot_function_source(source: str) -> str | None:
@@ -283,6 +287,21 @@ def detect_plot_function_source(source: str) -> str | None:
         if preferred in cands:
             return preferred
     return cands[0] if cands else None
+
+
+def panel_cells(script: Path | str) -> tuple[int, int]:
+    """이 패널이 필요로 하는 칸의 모양 (행, 열). 보통 (1, 1).
+
+    이미 N패널인 스크립트는 그만큼의 자리를 차지해야 한다. 조립 화면이
+    미리 알아야 '이건 2칸이 필요합니다'를 말할 수 있다.
+    """
+    try:
+        source = Path(script).read_text(encoding="utf-8")
+    except OSError:
+        return (1, 1)
+    if detect_plot_function_source(source):
+        return (1, 1)          # ax 하나를 받는 계약이면 한 칸이다
+    return autowrap.axes_shape(source)
 
 
 def panel_problem(script: Path | str) -> str | None:
@@ -328,6 +347,11 @@ CELLS = {cells!r}
 # right kind of axes from the start — it cannot be converted afterwards.
 PROJECTIONS = {projections!r}
 
+# A panel that already draws several axes keeps its own grid: its region is
+# subdivided into (rows, cols) and it receives that list of axes. (1, 1) means
+# an ordinary single-axes panel.
+INNER = {inner!r}
+
 PANEL_LABELS = {labels!r}
 
 
@@ -337,12 +361,25 @@ PANELS = [{names}]
 
 fig = plt.figure(figsize=({w!r}, {h!r}))
 _gs = fig.add_gridspec({rows}, {cols})
-_axes = [fig.add_subplot(_gs[_r:_r + _rs, _c:_c + _cs],
-                         **({{}} if _p is None else {{"projection": _p}}))
-         for (_r, _c, _rs, _cs), _p in zip(CELLS, PROJECTIONS)]
 
-for _draw, _ax in zip(PANELS, _axes):
-    _draw(_ax)
+_axes = []          # every axes, in reading order — the labels follow this
+_targets = []       # what each panel is handed: one axes, or a list of them
+for (_r, _c, _rs, _cs), _p, (_ir, _ic) in zip(CELLS, PROJECTIONS, INNER):
+    _spec = _gs[_r:_r + _rs, _c:_c + _cs]
+    _kw = {{}} if _p is None else {{"projection": _p}}
+    if (_ir, _ic) == (1, 1):
+        _a = fig.add_subplot(_spec, **_kw)
+        _axes.append(_a)
+        _targets.append(_a)
+    else:
+        _sub = _spec.subgridspec(_ir, _ic)
+        _group = [fig.add_subplot(_sub[_i, _j], **_kw)
+                  for _i in range(_ir) for _j in range(_ic)]
+        _axes.extend(_group)
+        _targets.append(_group)
+
+for _draw, _t in zip(PANELS, _targets):
+    _draw(_t)
 
 for _ax, _label in zip(_axes, PANEL_LABELS):
     # Axes3D.text takes (x, y, z, s); text2D is the 2D-in-axes-coords one.
@@ -370,7 +407,7 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
     """
     base = Path(base_dir).resolve()
     out = Path(out_path)
-    blocks, names, projections, missing = [], [], [], []
+    blocks, names, projections, inner, missing = [], [], [], [], []
 
     for i, ref in enumerate(mspec.panels):
         script, _ = ref.resolve(base)
@@ -385,6 +422,7 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
         names.append(name)
         # 투영은 패널이 자기 축을 어떻게 만드는지에서 읽는다
         projections.append(detect_projection(script))
+        inner.append(panel_cells(script))
 
     if missing:
         raise ValueError(_t(
@@ -396,10 +434,12 @@ def generate_subplot_script(mspec: MontageSpec, out_path: Path | str,
             "단독 실행도 그대로 되고 병합도 가능해집니다.",
             scripts="\n  ".join(missing)))
 
-    labels = M.default_labels(len(names), mspec.label_template)
+    # 안쪽 각각이 하나의 패널이다 — (a)(b)(c)가 그렇게 붙어야 한다
+    total = sum(r * c for r, c in inner)
+    labels = M.default_labels(total, mspec.label_template)
     out.write_text(MERGE_TEMPLATE.format(
         panels="\n\n".join(blocks), names=", ".join(names),
-        cells=mspec.placements(), projections=projections,
+        cells=mspec.placements(), projections=projections, inner=inner,
         labels=labels,
         rows=mspec.rows, cols=mspec.cols,
         w=round(panel_size[0] * mspec.cols, 2),

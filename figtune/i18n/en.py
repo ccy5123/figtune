@@ -105,6 +105,7 @@ MESSAGES = {
 
     # --- 그림 합치기 ------------------------------------------------------
     "그림 합치기": "Merge figures",
+    "{name} — {r}x{c} 칸 권장": "{name} — best in {r}x{c} cells",
     "ax를 받는 plot(ax) 함수가 없습니다": "no plot(ax) function taking ax",
     "읽지 못했습니다: {err}": "could not read it: {err}",
     "{name}은(는) 합칠 수 없습니다 — {why}\n\n"

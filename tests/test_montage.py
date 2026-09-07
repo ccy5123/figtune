@@ -19,6 +19,7 @@ from figtune.core.montage_build import (MontageSpec, PanelRef, build,
                                         can_use_subplot_mode,
                                         detect_plot_function,
                                         detect_projection,
+                                        panel_cells,
                                         panel_problem,
                                         generate_subplot_script)
 from figtune.core.session import Session
@@ -29,10 +30,15 @@ ax.plot([0, 1, 2], [0, 1, 4], 'o-')
 ax.set_ylabel({ylab!r}); ax.set_xlabel('Time (h)'); ax.set_title({title!r})
 """
 
-MULTI = """import matplotlib.pyplot as plt
-fig, axes = plt.subplots(1, 2, figsize=(8, 3))
-axes[0].plot([0, 1], [0, 1]); axes[0].set_title({title!r})
-axes[1].plot([0, 1], [1, 0])
+# 합칠 수 없는 스크립트. __file__을 병합 파일 안으로 옮기면 그 값이 병합
+# 파일의 경로가 되어 조용히 다른 데이터를 읽는다.
+UNMERGEABLE = """from pathlib import Path
+import matplotlib.pyplot as plt
+
+DATA = Path(__file__).parent / {title!r}
+
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
 """
 
 FUNCFORM = """import matplotlib.pyplot as plt
@@ -173,17 +179,18 @@ def test_subplot_mode_yields_one_real_figure(tmp_path):
 def test_subplot_mode_refuses_loudly_when_not_applicable(tmp_path):
     """조용히 모드 A로 떨어지면 어느 산출물을 보고 있는지 알 수 없게 된다.
 
-    평범한 단일 axes 스크립트는 이제 자동으로 감싸진다. 진짜 못 합치는 것은
-    축을 여러 개 만드는 스크립트다 — 한 칸에 진짜 축으로 넣을 방법이 없다.
+    평범한 스크립트도 여러 패널짜리도 이제 자동으로 감싸진다. 진짜 못
+    합치는 것은 __file__로 경로를 잡는 스크립트다 — 옮기면 그 값이 병합
+    파일의 경로가 되어 조용히 다른 데이터를 읽는다.
     """
     for i in range(2):
-        (tmp_path / f"m{i}.py").write_text(MULTI.format(title=f"p{i}"),
+        (tmp_path / f"m{i}.py").write_text(UNMERGEABLE.format(title=f"p{i}"),
                                            encoding="utf-8")
     ms = MontageSpec(rows=1, cols=2,
                      panels=[PanelRef(script=f"m{i}.py") for i in range(2)])
     with pytest.raises(ValueError) as e:
         generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
-    assert "2개" in str(e.value)
+    assert "__file__" in str(e.value)
 
 
 def test_merge_script_runs_without_figtune(tmp_path):
@@ -292,12 +299,12 @@ def test_merge_cli_refuses_and_explains(tmp_path, monkeypatch, capsys):
 
     for i in range(2):
         (tmp_path / f"p{i}.py").write_text(
-            MULTI.format(title="t"), encoding="utf-8")
+            UNMERGEABLE.format(title="t"), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     assert main(["merge", "p0.py", "p1.py", "-o", str(tmp_path / "m.py")]) == 1
     err = capsys.readouterr().err
-    assert "2개" in err
+    assert "__file__" in err
     assert "--svg" in err                      # 대안을 알려준다
 
 
@@ -306,7 +313,7 @@ def test_merge_cli_svg_fallback(tmp_path, monkeypatch):
 
     for i in range(2):
         (tmp_path / f"p{i}.py").write_text(
-            MULTI.format(title="t"), encoding="utf-8")
+            UNMERGEABLE.format(title="t"), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     svg = tmp_path / "out.svg"
@@ -484,12 +491,6 @@ def test_a_good_panel_has_no_problem(tmp_path):
     assert panel_problem(p) is None
 
 
-def test_a_multi_axes_script_is_reported(tmp_path):
-    """합칠 수 없다는 것을 다 채우고 나서 알면 늦다."""
-    p = tmp_path / "multi.py"
-    p.write_text(MULTI.format(title="t"), encoding="utf-8")
-    assert "2개" in panel_problem(p)
-
 
 def test_a_script_using_file_is_reported(tmp_path):
     p = tmp_path / "f.py"
@@ -617,11 +618,85 @@ def test_a_bare_script_does_not_make_its_own_figure(tmp_path):
     assert len(s.fig.axes) == 1, "축이 더 생겼습니다"
 
 
-def test_a_multi_axes_script_is_still_reported(tmp_path):
-    """2패널짜리를 한 칸에 진짜 축으로 넣을 방법이 없다 — 이유를 알린다."""
+
+# --- 이미 N패널인 스크립트는 N칸을 차지한다 -------------------------------------
+
+TWO_PANEL = """import matplotlib.pyplot as plt
+
+LW = 2.0
+
+fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+axes[0].plot([0, 1], [0, 1], lw=LW); axes[0].set_title('L')
+axes[1].plot([0, 1], [1, 0], lw=LW); axes[1].set_title('R')
+plt.show()
+"""
+
+
+def test_a_two_panel_script_can_take_two_cells(tmp_path):
+    """한 칸에 진짜 축으로 넣을 수는 없지만, 두 칸을 주면 된다."""
+    (tmp_path / "two.py").write_text(TWO_PANEL, encoding="utf-8")
+    (tmp_path / "solo.py").write_text(
+        FUNCFORM.format(ylab="C", title="solo"), encoding="utf-8")
+
+    ms = MontageSpec(rows=2, cols=2, panels=[
+        PanelRef(script="two.py", row=0, col=0, colspan=2),
+        PanelRef(script="solo.py", row=1, col=0, colspan=2)])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    titles = [ax.get_title() for ax in s.fig.axes]
+    assert titles == ["L", "R", "solo"], titles
+    assert s.fig.axes[0].lines[0].get_linewidth() == 2.0
+
+
+def test_the_inner_panels_sit_side_by_side(tmp_path):
+    """스크립트 자신의 격자(1x2)대로 영역을 나눠야 한다."""
+    (tmp_path / "two.py").write_text(TWO_PANEL, encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=2,
+                     panels=[PanelRef(script="two.py", row=0, col=0, colspan=2)])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    left, right = (ax.get_position().bounds for ax in s.fig.axes[:2])
+    assert left[0] < right[0], "나란히 놓이지 않았습니다"
+    assert abs(left[1] - right[1]) < 1e-6, "위아래로 갈렸습니다"
+
+
+def test_every_inner_panel_gets_its_own_label(tmp_path):
+    """안쪽 각각이 하나의 패널이다 — (a)(b)(c)가 그렇게 붙어야 한다."""
+    (tmp_path / "two.py").write_text(TWO_PANEL, encoding="utf-8")
+    (tmp_path / "solo.py").write_text(
+        FUNCFORM.format(ylab="C", title="solo"), encoding="utf-8")
+    ms = MontageSpec(rows=2, cols=2, panels=[
+        PanelRef(script="two.py", row=0, col=0, colspan=2),
+        PanelRef(script="solo.py", row=1, col=0, colspan=2)])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    labels = [t.get_text() for ax in s.fig.axes for t in ax.texts]
+    assert labels == ["(a)", "(b)", "(c)"], labels
+
+
+def test_a_multi_panel_script_is_no_longer_a_problem(tmp_path):
     p = tmp_path / "two.py"
-    p.write_text("import matplotlib.pyplot as plt\n"
-                 "fig, axes = plt.subplots(1, 2)\n"
-                 "axes[0].plot([0, 1], [0, 1])\n", encoding="utf-8")
-    why = panel_problem(p)
-    assert why and "2개" in why
+    p.write_text(TWO_PANEL, encoding="utf-8")
+    assert panel_problem(p) is None
+
+
+def test_panel_cells_reports_how_many_cells_are_needed(tmp_path):
+    """조립 화면이 '이건 2칸이 필요합니다'를 미리 알아야 한다."""
+    (tmp_path / "two.py").write_text(TWO_PANEL, encoding="utf-8")
+    (tmp_path / "solo.py").write_text(
+        FUNCFORM.format(ylab="C", title="solo"), encoding="utf-8")
+    assert panel_cells(tmp_path / "two.py") == (1, 2)
+    assert panel_cells(tmp_path / "solo.py") == (1, 1)
+
+
+def test_a_file_relative_script_is_reported(tmp_path):
+    """이제 못 합치는 것은 이것뿐이다 — 조용히 다른 데이터를 읽게 된다."""
+    p = tmp_path / "rel.py"
+    p.write_text(UNMERGEABLE.format(title="d.csv"), encoding="utf-8")
+    assert "__file__" in panel_problem(p)
