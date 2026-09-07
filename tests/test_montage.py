@@ -761,3 +761,123 @@ def test_absolute_paths_never_warn(tmp_path):
     out.mkdir()
     ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="p.py")])
     assert data_warnings(ms, out, base_dir=tmp_path) == []
+
+
+# --- 데이터가 서로 다른 곳에 있는 패널들 ----------------------------------------
+#
+# 각자 자기 폴더에서 상대 경로로 데이터를 읽는 패널 둘을 합치면, 병합 파일을
+# 어디에 두든 한쪽은 반드시 깨진다. 조용히 깨지면 원인을 알 수 없으므로
+# 만들기 전에 어느 패널이 왜 깨지는지 말해야 한다.
+
+READS_LOCAL = """import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv({data!r})
+
+def plot(ax):
+    ax.plot(df.x, df.y, 'o-')
+    ax.set_title({title!r})
+"""
+
+
+@pytest.fixture
+def two_sites(tmp_path):
+    """데이터가 각자 자기 폴더에 있는 패널 둘 + 빈 출력 폴더."""
+    a, b, paper = tmp_path / "siteA", tmp_path / "siteB", tmp_path / "paper"
+    for p in (a, b, paper):
+        p.mkdir()
+    (a / "uptake.csv").write_text("x,y\n0,0\n1,2\n", encoding="utf-8")
+    (b / "dose.csv").write_text("x,y\n0,1\n1,3\n", encoding="utf-8")
+    (a / "uptake.py").write_text(
+        READS_LOCAL.format(data="uptake.csv", title="A"), encoding="utf-8")
+    (b / "dose.py").write_text(
+        READS_LOCAL.format(data="dose.csv", title="B"), encoding="utf-8")
+    return tmp_path, a, b, paper
+
+
+def _spec_for(a, b):
+    return MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script=str(a / "uptake.py")),
+        PanelRef(script=str(b / "dose.py"))])
+
+
+def test_both_panels_are_named_when_the_output_is_elsewhere(two_sites):
+    """제3의 폴더에 두면 둘 다 못 찾는다 — 둘 다 말해야 한다."""
+    root, a, b, paper = two_sites
+    warns = data_warnings(_spec_for(a, b), paper, base_dir=root)
+    assert len(warns) == 2
+    assert any("uptake.csv" in w for w in warns)
+    assert any("dose.csv" in w for w in warns)
+
+
+def test_only_the_far_one_is_named_when_saved_beside_the_other(two_sites):
+    """한쪽 폴더에 두면 그쪽은 멀쩡하다. 멀쩡한 것까지 경고하면 읽히지 않는다."""
+    root, a, b, _paper = two_sites
+    warns = data_warnings(_spec_for(a, b), a, base_dir=root)
+    assert len(warns) == 1
+    assert "dose.py" in warns[0] and "uptake" not in warns[0]
+
+
+def test_the_merge_really_does_fail_there(two_sites):
+    """경고가 엄살이 아니라는 것 — 실제로 못 찾는다."""
+    root, a, b, paper = two_sites
+    out = generate_subplot_script(_spec_for(a, b), paper / "m.py", base_dir=root)
+    with pytest.raises(FileNotFoundError):
+        Session().open(out)
+
+
+def test_absolute_paths_make_it_work_from_anywhere(two_sites):
+    """경고가 일러 준 해법이 실제로 통해야 한다."""
+    root, a, b, paper = two_sites
+    (a / "uptake.py").write_text(
+        READS_LOCAL.format(data=str(a / "uptake.csv"), title="A"),
+        encoding="utf-8")
+    (b / "dose.py").write_text(
+        READS_LOCAL.format(data=str(b / "dose.csv"), title="B"),
+        encoding="utf-8")
+
+    ms = _spec_for(a, b)
+    assert data_warnings(ms, paper, base_dir=root) == []
+    out = generate_subplot_script(ms, paper / "m.py", base_dir=root)
+
+    s = Session()
+    s.open(out)
+    assert [ax.get_title() for ax in s.fig.axes] == ["A", "B"]
+
+
+def test_the_panels_still_run_on_their_own(two_sites):
+    """합치기 때문에 원본이 못 돌게 되면 안 된다 — figtune은 원본을 안 고친다."""
+    root, a, b, _paper = two_sites
+    for script in (a / "uptake.py", b / "dose.py"):
+        s = Session()
+        s.open(script)
+        assert len(s.fig.axes) == 1
+
+
+def test_the_demo_generator_builds_what_it_promises(tmp_path):
+    """examples/make_two_sites.py가 만드는 구조가 문서와 어긋나면
+    시험해 보려던 사람이 엉뚱한 데서 막힌다."""
+    import runpy
+
+    gen = Path(__file__).resolve().parent.parent / "examples" / "make_two_sites.py"
+    runpy.run_path(str(gen))["build"](tmp_path)
+
+    a, b = tmp_path / "siteA", tmp_path / "siteB"
+    assert (a / "uptake.py").exists() and (a / "uptake.csv").exists()
+    assert (b / "dose.py").exists() and (b / "dose.csv").exists()
+    assert (tmp_path / "paper").is_dir()
+
+    # 데이터를 상대 경로로 읽는다 — 그것이 이 시나리오의 요점이다
+    assert relative_data_reads((a / "uptake.py").read_text(encoding="utf-8")) \
+        == ["uptake.csv"]
+
+    # figtune으로는 어느 cwd에서든 열린다 (스크립트 폴더로 옮겨 실행하므로)
+    s = Session()
+    s.open(a / "uptake.py")
+    assert s.fig.axes[0].get_title() == "Site A uptake"
+
+    # 그리고 합치면 경고가 둘 뜬다
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script=str(a / "uptake.py")),
+        PanelRef(script=str(b / "dose.py"))])
+    assert len(data_warnings(ms, tmp_path / "paper", base_dir=tmp_path)) == 2
