@@ -19,7 +19,9 @@ from figtune.core.montage_build import (MontageSpec, PanelRef, build,
                                         can_use_subplot_mode,
                                         detect_plot_function,
                                         detect_projection,
+                                        data_warnings,
                                         panel_cells,
+                                        relative_data_reads,
                                         panel_problem,
                                         generate_subplot_script)
 from figtune.core.session import Session
@@ -700,3 +702,62 @@ def test_a_file_relative_script_is_reported(tmp_path):
     p = tmp_path / "rel.py"
     p.write_text(UNMERGEABLE.format(title="d.csv"), encoding="utf-8")
     assert "__file__" in panel_problem(p)
+
+
+# --- 외부 데이터를 읽는 패널 ---------------------------------------------------
+#
+# 상대 경로는 실행하는 파일 기준으로 풀린다. 병합 파일이 데이터와 다른
+# 폴더에 있으면 못 찾는다 — 날것의 FileNotFoundError만 나와서는 왜 그런지
+# 알 수 없다.
+
+READS = """import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv({path!r})
+
+def plot(ax):
+    ax.plot(df.t, df.y)
+"""
+
+
+@pytest.mark.parametrize("src,want", [
+    ("pd.read_csv('data.csv')", ["data.csv"]),
+    ("np.loadtxt('a/b.txt')", ["a/b.txt"]),
+    ("open('notes.json')", ["notes.json"]),
+    ("plt.imread('img.png')", ["img.png"]),
+    ("pd.read_csv('/abs/data.csv')", []),          # 절대 경로는 안전하다
+    ("pd.read_csv(PATH)", []),                     # 변수는 알 수 없다
+    ("ax.plot([0, 1], [0, 1])", []),
+])
+def test_relative_data_reads(src, want):
+    assert relative_data_reads(src) == want
+
+
+def test_no_warning_when_the_data_is_alongside(tmp_path):
+    (tmp_path / "d.csv").write_text("t,y\n0,1\n", encoding="utf-8")
+    (tmp_path / "p.py").write_text(READS.format(path="d.csv"), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="p.py")])
+    assert data_warnings(ms, tmp_path, base_dir=tmp_path) == []
+
+
+def test_a_warning_when_the_merge_file_moves_away(tmp_path):
+    """옮겨 놓고 실행할 때가 되어서야 아는 것은 늦다."""
+    (tmp_path / "d.csv").write_text("t,y\n0,1\n", encoding="utf-8")
+    (tmp_path / "p.py").write_text(READS.format(path="d.csv"), encoding="utf-8")
+    out = tmp_path / "paper"
+    out.mkdir()
+
+    warns = data_warnings(MontageSpec(rows=1, cols=1,
+                                      panels=[PanelRef(script="p.py")]),
+                          out, base_dir=tmp_path)
+    assert len(warns) == 1
+    assert "d.csv" in warns[0] and "p.py" in warns[0]
+
+
+def test_absolute_paths_never_warn(tmp_path):
+    (tmp_path / "p.py").write_text(
+        READS.format(path=str(tmp_path / "d.csv")), encoding="utf-8")
+    out = tmp_path / "paper"
+    out.mkdir()
+    ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="p.py")])
+    assert data_warnings(ms, out, base_dir=tmp_path) == []

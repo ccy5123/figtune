@@ -289,6 +289,66 @@ def detect_plot_function_source(source: str) -> str | None:
     return cands[0] if cands else None
 
 
+# 데이터를 읽는 흔한 호출들. 여기 없는 방법으로 읽으면 잡지 못한다 —
+# 미리 알리는 것은 경고이지 보증이 아니다.
+_READERS = (
+    "read_csv", "read_excel", "read_table", "read_parquet", "read_json",
+    "read_pickle", "read_hdf", "loadtxt", "genfromtxt", "load", "open",
+    "imread", "read_feather", "read_stata",
+)
+
+
+def relative_data_reads(source: str) -> list[str]:
+    """이 스크립트가 상대 경로로 읽는 파일들.
+
+    상대 경로는 실행하는 파일 기준으로 풀린다. 병합 파일이 데이터와 다른
+    폴더에 있으면 못 찾는다.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if getattr(node.func, "attr", getattr(node.func, "id", None)) \
+                not in _READERS:
+            continue
+        for arg in node.args[:1]:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) \
+                    and not Path(arg.value).is_absolute():
+                out.append(arg.value)
+    return out
+
+
+def data_warnings(mspec: MontageSpec, out_dir: Path | str,
+                  base_dir: Path | str = ".") -> list[str]:
+    """병합 파일을 그 자리에 두면 데이터를 못 찾는 패널들.
+
+    옮겨 놓고 실행할 때가 되어서야 아는 것은 늦다. 그때 나오는 것은 날것의
+    FileNotFoundError뿐이라 왜 그런지도 알 수 없다.
+    """
+    base = Path(base_dir).resolve()
+    out = Path(out_dir).resolve()
+    msgs = []
+    for ref in mspec.panels:
+        script, _ = ref.resolve(base)
+        if script.parent == out:
+            continue          # 같은 폴더면 그대로 풀린다
+        try:
+            reads = relative_data_reads(script.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if reads:
+            msgs.append(_t(
+                "{script}는 {files}을(를) 상대 경로로 읽습니다. 병합 파일을 "
+                "{out}에 두면 찾지 못합니다 — 데이터 옆에 저장하거나 "
+                "절대 경로로 바꾸세요.",
+                script=script.name, files=", ".join(reads), out=out.name))
+    return msgs
+
+
 def panel_cells(script: Path | str) -> tuple[int, int]:
     """이 패널이 필요로 하는 칸의 모양 (행, 열). 보통 (1, 1).
 

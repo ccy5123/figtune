@@ -326,7 +326,8 @@ class MontageDialog(QDialog):
     # --- 만들기 -----------------------------------------------------------
 
     def _build(self):
-        from ...core.montage_build import MontageSpec, generate_subplot_script
+        from ...core.montage_build import (MontageSpec, data_warnings,
+                                           generate_subplot_script)
 
         try:
             panels = self.model.to_panels()
@@ -342,6 +343,18 @@ class MontageDialog(QDialog):
 
         ms = MontageSpec(rows=self.model.rows, cols=self.model.cols,
                          panels=panels)
+
+        # 데이터를 상대 경로로 읽는 패널은 병합 파일이 옮겨지면 찾지 못한다.
+        # 실행할 때가 되어서야 알면 늦다 — 그때 나오는 것은 날것의
+        # FileNotFoundError뿐이라 왜 그런지도 알 수 없다.
+        warns = data_warnings(ms, Path(out).parent,
+                              base_dir=Path(panels[0].script).parent)
+        if warns and QMessageBox.question(
+                self, _t("그림 합치기"),
+                "\n\n".join(warns) + "\n\n" + _t("그래도 만들까요?"),
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+
         try:
             self.result_path = generate_subplot_script(
                 ms, out, base_dir=Path(out).parent)
