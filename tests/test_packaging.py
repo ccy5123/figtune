@@ -5,6 +5,10 @@
 
 지원 OS도 마찬가지다. CI가 리눅스 단독인 한 다른 OS를 지원한다고 적는 것은
 확인하지 않은 것을 확인했다고 말하는 셈이다.
+
+바깥으로 나가는 글의 언어도 여기서 지킨다. PyPI는 README를 하나만 싣고
+description도 한 줄뿐이라, 그 자리에 한국어가 들어가면 영어권 사용자가 읽을
+것이 없다. 한 언어밖에 못 담는 자리는 영어로 둔다.
 """
 
 import re
@@ -66,6 +70,56 @@ def test_ci_runs_the_lowest_python_we_claim():
     versions = set(re.findall(r'"(3\.\d+)"', ci))
     assert "3.10" in versions, (
         f"requires-python은 3.10부터인데 CI는 {sorted(versions)}만 돕니다")
+
+
+# --- 바깥으로 나가는 글의 언어 -------------------------------------------
+
+HANGUL = re.compile(r"[가-힣]")
+
+
+def test_pypi_reads_the_english_readme():
+    """PyPI는 readme로 지정한 파일 하나만 싣는다."""
+    assert PYPROJECT["project"]["readme"] == "README.md"
+
+
+def test_the_one_line_description_is_english():
+    """pip show와 검색 결과에 실리는 한 줄. 두 언어를 담을 자리가 없다."""
+    desc = PYPROJECT["project"]["description"]
+    assert not HANGUL.search(desc), f"한국어가 남아 있습니다: {desc}"
+
+
+# 영어 README에 한국어가 남아도 되는 자리. 전부 한글이 **설명 대상**이라
+# 영어로 바꾸면 뜻이 사라지는 곳이다. 여기에 뭔가 추가하기 전에, 그것이 정말
+# 번역할 수 없는 것인지 먼저 확인할 것.
+ALLOWED_HANGUL = (
+    "README.ko.md",          # 언어 전환 링크
+    "한국어 / English",       # 언어 메뉴가 각 언어를 제 언어로 적는다는 설명
+    "AaBbCc 123 가나다",      # 글꼴 드롭다운의 미리보기 표본
+)
+
+
+def test_the_english_readme_is_english():
+    """번역이 반쯤 되다 만 채로 PyPI에 올라가는 것을 막는다."""
+    lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    leaks = [f"{i}행: {ln.strip()}" for i, ln in enumerate(lines, 1)
+             if HANGUL.search(ln)
+             and not any(ok in ln for ok in ALLOWED_HANGUL)]
+    assert not leaks, "영어 README에 한국어가 남아 있습니다:\n  " + "\n  ".join(leaks)
+
+
+def test_both_readmes_point_at_each_other():
+    """한쪽만 링크하면 다른 언어판이 있다는 것을 알 길이 없다."""
+    en = (ROOT / "README.md").read_text(encoding="utf-8")
+    ko = (ROOT / "README.ko.md").read_text(encoding="utf-8")
+    assert "README.ko.md" in en, "영어 README에 한국어판 링크가 없습니다"
+    assert "README.md" in ko, "한국어 README에 영어판 링크가 없습니다"
+
+
+def test_the_install_line_is_the_published_one():
+    """1.0.0부터는 PyPI에 있다. -e 설치를 안내하면 저장소를 받아야 한다."""
+    for name in ("README.md", "README.ko.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert 'pip install "figtune[gui]"' in text, name
 
 
 def _data_patterns() -> list[str]:

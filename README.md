@@ -1,172 +1,183 @@
 # figtune
 
-이미 그려진 matplotlib/seaborn figure를 GUI로 미세조정하고, 그 조정이
-**재현 가능한 Python 코드로 남는** 데스크톱 도구.
+English · **[한국어](README.ko.md)**
+
+A desktop tool that fine-tunes an already-drawn matplotlib/seaborn figure in a
+GUI and leaves the result as **reproducible Python code**.
 
 ```bash
-pip install -e ".[gui]"
+pip install "figtune[gui]"
 figtune plot_fig3.py
 ```
 
 ---
 
-## 무엇을 하는가
+## What it does
 
-입력은 항상 **준완성 figure**다. 이미 동작하는 플로팅 스크립트가 있고,
-figtune은 그 결과물의 표현만 손본다.
+The input is always a **nearly-finished figure**. You already have a working
+plotting script; figtune only adjusts how the result looks.
 
-**다루는 것** — 글꼴(종류·크기·굵기·색), 텍스트 내용과 위치, 임의 텍스트 삽입,
-figure 크기, 선/마커 색과 크기, spine 표시와 오프셋, tick 방향·길이·간격,
-grid, 범례 위치와 스타일, 축 범위와 스케일, 멀티패널 간격, (a)(b)(c) 패널 라벨,
-여러 그림을 원하는 배치로 합치기, PNG/PDF/SVG 내보내기.
+**In scope** — fonts (family, size, weight, color), text content and position,
+inserting arbitrary text, figure size, line and marker colors and sizes, spine
+visibility and offset, tick direction/length/spacing, grids, legend placement
+and style, axis limits and scales, multi-panel spacing, (a)(b)(c) panel labels,
+merging several figures into a layout of your choosing, and PNG/PDF/SVG export.
 
-**한 번에 하는 것** — 그림 안의 모든 글자에 글꼴(`Ctrl+Shift+F`)과 크기
-(`Ctrl+Shift+S`)를 한 번에 건다. 크기는 같은 값으로 맞추거나 배율로 키운다 —
-배율은 제목과 눈금의 크기 차이를 그대로 둔다. 여러 요소를 함께 골라
-공통 속성을 한꺼번에 고칠 수도 있다. 몇 개를 바꿨든 실행 취소는 한 칸이다.
+**All at once** — apply a font (`Ctrl+Shift+F`) or a size (`Ctrl+Shift+S`) to
+every piece of text in the figure. Sizes can be set to one value or scaled;
+scaling keeps the size difference between titles and ticks. You can also select
+several elements and edit their shared properties together. However many items
+change, undo takes one step.
 
-**다루지 않는 것** — 원본 데이터, plot 종류, 시리즈 추가·삭제, 커브 피팅,
-seaborn semantic(`hue`/`style`) 재매핑. 데이터나 함수가 바뀌어야 하는 작업은
-범위 밖이다.
+**Out of scope** — the underlying data, plot types, adding or removing series,
+curve fitting, remapping seaborn semantics (`hue`/`style`). Anything that
+requires the data or the functions to change is outside the tool.
 
 ---
 
-## 핵심 설계: 원본 코드를 고치지 않는다
+## Core design: your code is never modified
 
-범위가 표현으로 한정되므로 사용자의 플로팅 코드를 **읽지도 고치지도 않는다.**
-스크립트를 그대로 실행해 살아있는 `Figure`를 얻고, 그 위에 override만 덧씌운다.
+Because the scope is limited to presentation, figtune **neither reads nor
+edits** your plotting code. It runs the script as-is to obtain a live `Figure`
+and layers overrides on top of it.
 
 ```
-plot_fig3.py 실행 → Figure → GUI 편집 → spec → 코드 생성
+run plot_fig3.py → Figure → GUI editing → spec → code generation
 ```
 
-산출물은 두 개다.
+There are two artifacts.
 
-| 파일 | 역할 |
+| File | Role |
 |---|---|
-| `plot_fig3.figtune.yaml` | spec. 단일 원본. 손으로 읽고 고칠 수 있다 |
-| `plot_fig3_style.py` | 생성된 override 모듈 |
+| `plot_fig3.figtune.yaml` | The spec. Single source of truth. Human-readable and editable |
+| `plot_fig3_style.py` | The generated override module |
 
-원본 스크립트에는 **두 줄만** 추가된다 (그것도 사용자 확인을 받은 뒤에만).
+Only **two lines** are added to your script, and only after you confirm.
 
 ```python
 from plot_fig3_style import apply_style
 apply_style(fig)
 ```
 
-이 구조 덕분에 임의 Python을 파싱할 필요가 없다. 우리가 읽고 쓰는 코드는
-우리가 생성한 영역 100%라서 왕복이 원리적으로 안전하다. 루프나 헬퍼 함수로
-감싼 플로팅 코드도 문제되지 않는다 — 실행 결과만 보기 때문이다.
+This structure means arbitrary Python never has to be parsed. The code we read
+and write is 100% code we generated, so the round trip is safe by construction.
+Plotting code wrapped in loops or helper functions is no problem either — only
+the result of running it is inspected.
 
 ---
 
-## 데이터는 어떻게 다루나
+## How data is handled
 
-**figtune은 데이터를 들고 있지 않다.** 스크립트가 들고 있고, figtune은 그것을
-다시 돌린다. Origin이 OLE로 임베드할 때 그래프와 데이터 시트를 대상 파일에
-저장하는 것과 정반대다.
+**figtune does not hold your data.** The script holds it, and figtune re-runs
+the script. This is the opposite of Origin's OLE embedding, which stores the
+graph and its data sheet inside the target file.
 
-| | Origin (임베드) | figtune |
+| | Origin (embedded) | figtune |
 |---|---|---|
-| 덱/문서에 들어가는 것 | 그래프 + 원본 데이터 | 그림 + spec(≈1KB) + 출처 지문 |
-| 파일 크기 | 데이터만큼 불어남 | 거의 그대로 |
-| 데이터 갱신 | Origin에서 수동 재작업 | 스크립트 재실행 |
-| 외부 배포 | 원본 데이터가 함께 나감 | 그림과 스타일만 나감 |
+| What goes into the deck/document | Graph + raw data | Image + spec (≈1KB) + source fingerprint |
+| File size | Grows with the data | Essentially unchanged |
+| Updating data | Manual rework in Origin | Re-run the script |
+| Sharing externally | Raw data goes along | Only the image and the styling |
 
-이 선택에는 구멍이 하나 따라온다. 데이터를 품지 않으므로 **어떤 데이터에서
-나온 그림인지 알 수 없다.** 3월 슬라이드와 6월 슬라이드가 똑같이 생겼는데
-다른 데이터일 수 있다.
+This choice comes with a hole. Since the data is not carried along, **you cannot
+tell which data a figure came from.** The March slide and the June slide may
+look identical yet come from different numbers.
 
-그래서 데이터 대신 **데이터의 지문**을 남긴다. 스크립트가 실행 중 읽은 파일을
-`sys.addaudithook`으로 포착해 경로·크기·SHA-256을 spec에 기록한다. 인프로세스
-모드와 `--python` 서브프로세스 모드 양쪽에서 동작한다.
+So instead of the data, a **fingerprint of the data** is recorded. Files the
+script reads while running are captured with `sys.addaudithook`, and their path,
+size, and SHA-256 go into the spec. This works in both in-process mode and
+`--python` subprocess mode.
 
 ```bash
 figtune refresh deck.pptx --check
-# 변경예정  slide 3 / plot_fig3.py  [데이터 수정 1]
+# will change  slide 3 / plot_fig3.py  [data modified 1]
 ```
 
-`--check`는 덱을 건드리지 않고 무엇이 바뀔지만 보고한다.
+`--check` touches nothing and only reports what would change.
 
-### 기준점이 둘이다
+### There are two anchors
 
-| 무엇 | 무엇을 기준으로 | 왜 |
+| What | Relative to | Why |
 |---|---|---|
-| 스크립트 경로 | **덱(pptx) 위치** | 덱이 스크립트를 가리켜야 하므로 |
-| 스크립트가 읽는 데이터 | **스크립트 위치** | 실행 시 스크립트 디렉토리로 chdir |
-| 기록된 데이터 출처 | **스크립트 위치** | 프로젝트를 옮겨도 지문이 유지되도록 |
+| Script path | **The deck (pptx)** | The deck has to point at the script |
+| Data the script reads | **The script** | Execution chdirs into the script's directory |
+| Recorded data sources | **The script** | So fingerprints survive moving the project |
 
 ```
 project/
 ├── slides/deck.pptx          →  script = "../analysis/plot_a.py"
 └── analysis/
     ├── plot_a.py             →  pd.read_csv("data.csv")
-    └── data.csv              →  기록: "data.csv"
+    └── data.csv              →  recorded as: "data.csv"
 ```
 
-`Payload.for_deck(script, deck, spec)`가 덱 기준 상대경로를 자동 계산한다.
-다른 드라이브처럼 상대경로가 불가능하면 절대경로로 남긴다.
+`Payload.for_deck(script, deck, spec)` computes the deck-relative path
+automatically. When a relative path is impossible — a different drive, say — an
+absolute path is stored instead.
 
-프로젝트를 폴더째 옮겨도 refresh가 그대로 동작한다. 경로를 절대경로로
-기록하면 같은 파일이 '사라짐 + 추가됨'으로 잡혀 오경보가 나는데, 오경보는
-경고 전체를 무의미하게 만든다. 내용(SHA-256)이 같고 경로만 다르면 '옮겨진
-것'으로 보고 변경으로 치지 않는다.
+Moving the whole project folder keeps refresh working. Recording absolute paths
+would make the same file register as "gone + added", and a false alarm makes
+every warning worthless. When the contents (SHA-256) match and only the path
+differs, it is treated as "moved" and not counted as a change.
 
-### 데이터 변경과 코드 변경을 구분한다
+### Data changes and code changes are told apart
 
-지문 검증은 원래 "원본 스크립트가 바뀌었다"를 잡기 위한 것이었는데, 데이터가
-바뀌어도 똑같이 어긋난다. 둘을 같은 경고로 묶으면 사용자가 경고를 무시하게
-되고, 그러면 정작 위험한 경우 — 인덱스가 밀려 엉뚱한 선에 색이 칠해지는 것 —
-을 놓친다. 그래서 출처 지문으로 원인을 갈라 다른 문구를 띄운다.
+Fingerprint verification was originally there to catch "the source script
+changed", but changed data trips the same wire. Folding both into one warning
+trains users to ignore warnings, and then the genuinely dangerous case — an
+index shifting so the color lands on the wrong line — slips through. So the
+source fingerprints separate the cause and the message differs.
 
-- 데이터만 바뀜 → "입력 데이터가 바뀌었습니다. 그림이 달라지는 것은 정상입니다"
-- 코드가 바뀜 → "원본 스크립트가 변경되었습니다. 재매칭이 필요합니다"
+- Data only → "The input data changed. A different figure is expected."
+- Code changed → "The source script changed. Re-matching is needed."
 
-### 하지 않는 것
+### What it will not do
 
-데이터 편집, 필터링, 피팅은 범위 밖이다. 그건 스크립트가 할 일이다.
-figtune이 데이터를 만지기 시작하면 "이 도구는 표현만 건드린다"는 전제가
-무너지고, 원본 코드를 파싱하지 않아도 되는 이유도 함께 사라진다.
+Editing, filtering, and fitting data are out of scope. That is the script's job.
+Once figtune starts touching data, the premise that "this tool only touches
+presentation" collapses — and with it the reason it never has to parse your code.
 
 ---
 
-## 정규형
+## Normal form
 
-figtune의 모든 상태는 정규형으로만 존재한다. 정규형을 정해 두면 spec 비교,
-git diff, 왕복 검증이 전부 기계적으로 가능해진다.
+Every piece of figtune state exists only in normal form. Fixing a normal form
+makes spec comparison, git diffs, and round-trip verification mechanical.
 
-### spec 정규형
+### Spec normal form
 
-**보장하는 것** (전부 테스트로 확인한다)
+**What is guaranteed** (all verified by tests)
 
-| 성질 | 내용 |
+| Property | Meaning |
 |---|---|
-| 멱등 | `N(N(x)) = N(x)` |
-| 결정성 | 같은 내용은 항상 같은 바이트로 직렬화 |
-| 닫힘 | 모든 조작의 결과가 다시 정규형 |
-| 왕복 | `parse(codegen(N(s))) = N(s)` |
+| Idempotent | `N(N(x)) = N(x)` |
+| Deterministic | The same content always serializes to the same bytes |
+| Closed | Every operation leaves the result in normal form |
+| Round trip | `parse(codegen(N(s))) = N(s)` |
 
-접는 규칙: 색은 소문자 hex, `solid`→`-`, `dashed`→`--`, 빈 마커 표기는
-`none`, 굵기 `700`→`bold`, 범례 위치 정수 코드 `2`→`upper left`, tuple→list,
-`None`과 빈 dict 제거, 해석 불가한 selector 제거. 키는 **적용 순서**로
-정렬한다 — 적용 순서와 정렬 순서가 어긋나면 "저장한 대로 다시 적용된다"는
-보장이 깨지므로 하나의 표(`canon.KIND_ORDER`)를 apply·codegen·canon이 함께
-쓴다.
+Folding rules: colors to lowercase hex, `solid`→`-`, `dashed`→`--`, empty marker
+spellings to `none`, weight `700`→`bold`, integer legend location `2`→`upper
+left`, tuple→list, `None` and empty dicts dropped, unresolvable selectors
+dropped. Keys are sorted in **application order** — if application order and
+sort order diverge, the guarantee that "it re-applies exactly as saved" breaks,
+so a single table (`canon.KIND_ORDER`) is shared by apply, codegen, and canon.
 
-**보장하지 않는 것.** 의미적 최소화는 하지 않는다. 즉 "그림이 같으면 spec도
-같다"는 성립하지 않는다. 그러려면 스크립트가 이미 그린 값과 대조해 중복
-override를 지워야 하는데, 그러면 spec이 스크립트 내용에 의존하게 된다.
-스크립트가 바뀌는 순간 사용자가 명시한 지정이 조용히 사라진다 — figtune에서
-가장 위험한 실패다. 그래서 정규형은 **구문적**이다.
+**What is not guaranteed.** There is no semantic minimization: "same figure
+implies same spec" does not hold. Achieving that would mean comparing against
+what the script already drew and deleting redundant overrides, which would make
+the spec depend on the script's contents. The moment the script changed, a
+setting the user explicitly made would silently vanish — the most dangerous
+failure in figtune. So the normal form is **syntactic**.
 
-**두 단계로 적용한다.** 편집 중에는 override 표만 정규화하고, user text id
-재부여는 open/save 경계에서만 한다. 편집 도중 id가 밀리면 GUI가 들고 있는
-selector(`ax0.text:t002`)가 다른 텍스트를 가리키게 되기 때문이다.
+**It is applied in two stages.** During editing only the override table is
+normalized; user-text ids are reassigned only at open/save boundaries. If ids
+shifted mid-edit, the selector the GUI is holding (`ax0.text:t002`) would start
+pointing at a different piece of text.
 
-### 스크립트 정규형
+### Script normal form
 
 ```python
-<imports 및 데이터 준비>
+<imports and data preparation>
 
 def plot(ax):
     ...
@@ -178,83 +189,90 @@ if __name__ == "__main__":
 ```
 
 ```bash
-figtune normalize plot_a.py --check     # 판정만
-figtune normalize plot_a.py             # plot_a_norm.py 생성
+figtune normalize plot_a.py --check     # report only
+figtune normalize plot_a.py             # writes plot_a_norm.py
 figtune merge *.py -o quad.py --normalize
 ```
 
-원본은 기본적으로 덮어쓰지 않는다. `--in-place`를 명시해야 한다.
+The original is never overwritten by default; `--in-place` must be explicit.
 
-**인식 가능한 부분집합에서만 동작한다.** 임의의 Python을 정규형으로 바꾸는
-것은 일반적으로 불가능하다. 벗어나면 무엇이 몇 행에서 걸렸는지 알리고
-멈춘다 — 추측해서 고치면 사용자의 그림이 소리 없이 달라진다.
+**It only works on a recognizable subset.** Converting arbitrary Python to the
+normal form is impossible in general. Outside that subset, figtune reports what
+tripped it and on which line, then stops — guessing would silently change your
+figure.
 
-**받아들이는 형태**
+**Accepted**
 
-- `ax.plot(...)` 같은 그리기 호출
-- `im = ax.imshow(...)`, `ax2 = ax.twinx()` 같은 단순 대입
-- 대입으로 묶인 이름의 후속 그리기 (`ax2.plot(...)`, `cb.set_label(...)`).
-  그리기 대상 집합이 전이적으로 자란다
-- `fig.colorbar(...)` → `ax.figure.colorbar(...)`로 바꿔 옮긴다. colorbar는
-  인자로 받은 축에 붙으므로 병합 격자에서도 제자리를 지킨다
-- `plt.show()`, `fig.tight_layout()` 등 레이아웃·출력 호출은 버린다
-  (단독 실행 블록과 병합 스크립트가 대신 처리한다)
+- Drawing calls such as `ax.plot(...)`
+- Simple assignments such as `im = ax.imshow(...)`, `ax2 = ax.twinx()`
+- Follow-up drawing on assigned names (`ax2.plot(...)`, `cb.set_label(...)`).
+  The set of drawing targets grows transitively
+- `fig.colorbar(...)` → rewritten to `ax.figure.colorbar(...)`. A colorbar
+  attaches to the axes it is handed, so it keeps its place in a merged grid
+- Layout and output calls such as `plt.show()` and `fig.tight_layout()` are
+  dropped (the standalone block and the merge script handle those instead)
 
-**거부하는 형태**
+**Rejected**
 
-- `subplots()`가 여러 축을 만드는 경우, 호출이 둘 이상인 경우, 아예 없는
-  경우(seaborn `relplot` 등)
-- 그리기 문장이 조건문·반복문 안에 있는 경우
-- `fig.suptitle(...)` — figure 전체의 것이라 병합하면 패널마다 서로
-  덮어써서 마지막 것만 남는다
-- `plt.title(...)` 같은 pyplot 상태 호출 — 어느 축을 가리키는지 알 수 없다
-- `print(im.get_array().max())`처럼 그리기 대상을 **그리기 외 용도**로 쓰는
-  문장. 옮기면 실행 시점이 import에서 `plot()` 호출로 바뀐다
-- 함수 안으로 옮겨질 이름을 모듈 수준에서 쓰는 경우 (NameError 예방)
+- `subplots()` creating multiple axes, called more than once, or absent
+  entirely (seaborn `relplot` and friends)
+- Drawing statements inside conditionals or loops
+- `fig.suptitle(...)` — it belongs to the whole figure, so merging would let
+  panels overwrite each other and only the last would survive
+- pyplot state calls such as `plt.title(...)` — there is no way to know which
+  axes they mean
+- Statements that use a drawing target for **something other than drawing**,
+  such as `print(im.get_array().max())`. Moving it would shift execution from
+  import time to the `plot()` call
+- Module-level use of a name that would move inside the function (prevents
+  `NameError`)
 
-판단 기준은 **문장의 바깥쪽 호출**이다. `cb.set_label(...)`은 그리기지만
-`print(im.get_array())`는 안쪽에 대상 호출이 있어도 문장 자체는 출력이다.
+The test is the **outermost call of the statement**. `cb.set_label(...)` is
+drawing; `print(im.get_array())` has a target call inside it but the statement
+itself is output.
 
 ---
 
-## 여러 figure 합치기
+## Merging figures
 
-두 가지 모드가 있고, **무엇을 내놓는지가 서로 다르다.** 어느 쪽인지 알고
-쓰는 것이 중요하다.
+There are two modes, and **they produce different things.** Knowing which one
+you are using matters.
 
-| | 모드 A · montage | 모드 B · subplot |
+| | Mode A · montage | Mode B · subplot |
 |---|---|---|
-| 원본 수정 | 불필요 | `plot(ax)` 노출 필요 |
-| 산출물 | SVG 합성물 | **진짜 Figure + 평범한 파이썬 스크립트** |
-| 하나의 `ax` 객체인가 | 아니다 | 그렇다 |
-| 편집 단위 | 패널별로 따로 | 통째로 |
-| figtune 의존 | 있다 | 없다 |
+| Modifies the source | Not needed | Needs `plot(ax)` exposed |
+| Output | Composited SVG | **A real Figure + an ordinary Python script** |
+| One `ax` object? | No | Yes |
+| Unit of editing | Per panel | The whole thing |
+| Depends on figtune | Yes | No |
 
-### GUI로 합치기
+### Merging in the GUI
 
-`Ctrl+O`로 합칠 그림들을 **탭으로 열어 두고** `Ctrl+M`. PowerPoint에서 표를
-넣을 때처럼 격자를 훑어 크기를 고르면 조립 화면이 뜬다. 거기서 칸을 묶거나
-나누고, 빈 칸의 `+`로 열려 있는 탭을 놓는다. **저장하고 종료**하면 결과가 새
-탭으로 열린다.
+Open the figures you want to merge **as tabs** with `Ctrl+O`, then press
+`Ctrl+M`. Sweep a grid to pick the size, the way you insert a table in
+PowerPoint, and a composer screen appears. There you merge or split cells and
+drop an open tab into an empty cell with its `+`. **Save and close** and the
+result opens as a new tab.
 
-3×2에서 2칸짜리 둘과 1칸짜리 둘 같은 조합이 된다. 각 패널의 코드가 결과
-파일 안에 복사되어 들어가므로 **그 파일 하나로 완결된다** — 원본을 지우거나
-옮겨도 그림이 그려진다. 대신 나중에 패널을 고쳐도 반영되지 않는다. 다시
-합쳐야 한다.
+A 3×2 grid can hold two double-width panels and two single ones. Each panel's
+code is copied into the result, so **that one file is self-contained** — delete
+or move the originals and the figure still draws. The trade-off is that later
+edits to a panel are not reflected. You have to merge again.
 
-거의 모든 스크립트를 합칠 수 있다. `plot(ax)`가 없으면 자동으로 감싸고,
-`plt.plot(...)`만 쓰는 상태 기반도, 3D·polar도, 이미 N패널인 것도 된다
-(그것은 N칸을 차지한다). 합칠 수 없는 것은 `__file__`로 경로를 잡는
-스크립트뿐이며, 놓는 자리에서 이유와 함께 알린다.
+Almost any script can be merged. If there is no `plot(ax)` it is wrapped
+automatically; state-based scripts that only use `plt.plot(...)` work, as do 3D
+and polar, as do scripts that are already N panels (those take N cells). The
+only thing that cannot be merged is a script that locates paths with `__file__`,
+and you are told why at the moment you drop it.
 
-데이터를 파일에서 읽는 패널이면 **경로를 병합 위치 기준으로 고쳐 옮긴다.**
-패널마다 데이터가 다른 폴더에 있어도 합쳐진다. 절대 경로로 바꾸지는 않는다 —
-폴더째 다른 사람에게 보내도 그대로 돌아가야 하기 때문이다. 원본 파일은
-고치지 않는다.
+If a panel reads data from a file, **the path is rewritten relative to where the
+merged file goes.** Panels whose data lives in different folders still merge.
+Paths are not converted to absolute — the folder has to keep working when you
+send it to someone else. The original files are never modified.
 
-### 모드 B가 가능하면 그쪽을 쓴다
+### Prefer mode B when it is available
 
-패널 스크립트를 이렇게 바꾸면 된다. 단독 실행도 그대로 된다.
+Change the panel script like this. Running it standalone still works.
 
 ```python
 def plot(ax):
@@ -265,251 +283,272 @@ if __name__ == '__main__':
     fig, ax = plt.subplots(); plot(ax)
 ```
 
-그러면 figtune이 병합 스크립트를 생성한다. 결과는 평범한 matplotlib
-Figure이므로 figtune으로 열어 통째로 편집할 수 있고, 생성된 `*_style.py`는
-figtune 없이 돌아간다. 조건을 만족하지 않으면 무엇이 빠졌는지 알리고
-중단한다 — 조용히 모드 A로 떨어지면 어느 산출물을 보고 있는지 알 수 없다.
+figtune then generates a merge script. The result is an ordinary matplotlib
+Figure, so you can open it in figtune and edit it as a whole, and the generated
+`*_style.py` runs without figtune. If the conditions are not met, figtune says
+what is missing and stops — silently falling back to mode A would leave you
+unsure which artifact you are looking at.
 
-병합 스크립트가 만든 (a)(b)(c) 라벨도 편집 대상이다. 더 넓게는, 사용자
-스크립트가 `ax.text()`로 넣은 주석이 전부 트리에 `ax0.txt0` 형태로 나타난다.
-다만 **지울 수는 없다** — 지워도 재실행하면 되살아나기 때문이다. 감추려면
-`visible=False`를 쓰고, 그것도 코드로 남는다.
+The (a)(b)(c) labels the merge script creates are editable too. More broadly,
+any annotation your script added with `ax.text()` shows up in the tree as
+`ax0.txt0`. They **cannot be deleted**, though — deleting them would only bring
+them back on the next run. Use `visible=False` to hide one, and that is recorded
+as code as well.
 
-### 모드 A는 왜 axes를 옮기지 않는가
+### Why mode A does not move axes
 
-matplotlib은 figure 사이의 axes 이동을 지원하지 않는다. `ax.figure = other`
-도 `ax.set_figure(other)`도 transform 체인이 낡은 채 남아 눈금이 뭉개지고
-내용이 잘린다. 실측으로 확인했다. 그래서 모드 A는 SVG 레벨에서 합성한다.
+matplotlib does not support moving axes between figures. Neither
+`ax.figure = other` nor `ax.set_figure(other)` refreshes the transform chain, so
+ticks smear and content clips. This was verified by measurement. Mode A
+therefore composites at the SVG level.
 
-**axes 상자를 기준으로 정렬한다.** 단순 타일링은 논문 그림으로 못 쓴다.
-y축 라벨 길이가 다르면 패널마다 그림틀 위치가 어긋나기 때문이다. 각 패널의
-axes 위치는 알 수 있으므로(`ax.get_position()` × figure 크기) 열마다 왼쪽
-모서리를, 행마다 위 모서리를 맞춘다.
+**Alignment is based on the axes box.** Naive tiling is not publishable: when
+y-label lengths differ, the plot frames land in different places on each panel.
+Each panel's axes position is knowable (`ax.get_position()` × figure size), so
+left edges are aligned per column and top edges per row.
 
-**크기는 배율이 아니라 재렌더로 맞춘다.** 균일 배율은 종횡비가 다른 패널의
-가로세로를 동시에 맞출 수 없고, 비균일 배율은 글씨를 찌그러뜨린다. 그래서
-축 라벨이 차지하는 여백은 인치 단위로 두고 그림틀만 목표 크기로 다시 잡은 뒤
-재렌더한다. 배율 1로 정확히 일치한다.
+**Size is matched by re-rendering, not by scaling.** Uniform scaling cannot
+match width and height at once for panels of differing aspect ratio, and
+non-uniform scaling distorts the text. So the margin taken by axis labels is
+kept in inches and only the plot frame is resized to the target, then
+re-rendered. It matches exactly at scale 1.
 
 ```python
 from figtune.core.montage_build import MontageSpec, PanelRef, build
 
 ms = MontageSpec(rows=2, cols=2, panels=[PanelRef(script=f"p{i}.py")
                                          for i in range(4)])
-result = build(ms, base_dir="analysis/")     # (a)(b)(c)(d) 자동
+result = build(ms, base_dir="analysis/")     # (a)(b)(c)(d) automatically
 ```
 
 ---
 
-## 3D 그래프
+## 3D plots
 
-3D axes를 선택하면 고도각·방위각·롤·확대 조절이 나타난다. `view_init`은
-일부 인자만 주면 나머지를 초기값으로 되돌리므로 배치로 적용한다 — 범례,
-제목 여백과 같은 함정이다.
-
----
-
-## 안전장치
-
-**지문 검증.** `ax0.line1` 같은 인덱스 주소는 원본 스크립트가 바뀌면 **조용히**
-어긋난다. 색을 바꾸려던 선이 다른 선이 되는 식이다. 각 artist에 지문(점 개수,
-첫/끝 좌표, 라벨)을 저장하고 로드할 때 대조한다. 불일치는 경고하고, 라벨 기준
-재매칭 후보를 제안하되 **사용자 승인 없이 적용하지 않는다.**
-
-**null = 건드리지 않음.** spec에 명시한 키만 override 코드가 된다. 원본
-스크립트가 설정한 값이 GUI를 한 번 열었다는 이유로 덮이지 않는다.
-
-**수동 편집 감지.** 생성된 스타일 모듈에 로직(if/for/변수 대입)을 넣으면 파싱을
-포기하고 읽기 전용으로 전환한다. 조용히 뭉개지 않는다.
+Selecting a 3D axes brings up elevation, azimuth, roll, and zoom. `view_init`
+resets the arguments you omit to their defaults, so they are applied as a batch
+— the same trap as legends and title padding.
 
 ---
 
-## 구조
+## Safeguards
+
+**Fingerprint verification.** Index-based addresses like `ax0.line1` break
+**silently** when the source script changes; the line you meant to recolor
+becomes a different line. A fingerprint (point count, first and last
+coordinates, label) is stored for each artist and checked on load. A mismatch
+warns and proposes label-based re-matching candidates, but **never applies them
+without your approval.**
+
+**null means untouched.** Only keys present in the spec become override code. A
+value your script set is not overwritten merely because you once opened the GUI.
+
+**Manual-edit detection.** If logic (if/for/assignment) appears in the generated
+style module, figtune gives up parsing and switches to read-only rather than
+quietly mangling it.
+
+---
+
+## Layout
 
 ```
 figtune/
-├── core/              # UI 무관 · 순수 Python · 의존성은 matplotlib + pyyaml 뿐
-│   ├── props.py       # 프로퍼티 레지스트리 — GUI·적용·생성·파싱의 단일 참조점
-│   ├── selector.py    # 주소 지정 (ax0.line1, ax0.spine:top, ax0.xtick.major)
-│   ├── spec.py        # 스키마 + YAML 직렬화
-│   ├── fingerprint.py # 지문 생성·대조
-│   ├── introspect.py  # Figure → 노드 트리
-│   ├── apply.py       # spec → 살아있는 Figure
-│   ├── codegen.py     # spec → 스타일 모듈
-│   ├── parse.py       # 스타일 모듈 → spec (표준 ast, libcst 불필요)
-│   ├── runner.py      # 스크립트 실행 → Figure 회수
+├── core/              # UI-agnostic · pure Python · depends only on matplotlib + pyyaml
+│   ├── props.py       # Property registry — single source for GUI, apply, codegen, parse
+│   ├── selector.py    # Addressing (ax0.line1, ax0.spine:top, ax0.xtick.major)
+│   ├── spec.py        # Schema + YAML serialization
+│   ├── fingerprint.py # Fingerprint creation and comparison
+│   ├── introspect.py  # Figure → node tree
+│   ├── apply.py       # spec → live Figure
+│   ├── codegen.py     # spec → style module
+│   ├── parse.py       # style module → spec (stdlib ast; no libcst)
+│   ├── runner.py      # Run a script and recover the Figure
 │   ├── history.py     # undo/redo
-│   └── session.py     # 파사드. 프론트엔드는 이것만 호출
-│   ├── hit.py         # 클릭 좌표 → 편집 대상 (직접 조작의 판정)
-│   ├── drag.py        # 끌기 → 프로퍼티 값
-│   ├── layout.py      # 축이 종이 밖으로 나가면 종이를 키운다
-│   └── typefaces.py   # 그림에 쓸 수 있는 글꼴 (matplotlib 기준)
-├── i18n/              # 메시지 카탈로그. Qt 무관이라 core도 쓴다
-├── config.py          # 사용자 설정 (언어 선택 등)
-├── ui/qt/             # PySide6 어댑터
-│   ├── direct.py      # 커서 · 끌기 · 제자리 편집
-│   ├── minitoolbar.py # 선택하면 그 자리에 뜨는 문맥 도구막대
-│   ├── targetdialog.py# 대상 하나를 탭으로 펼치는 편집기
-│   ├── fontpicker.py  # 글꼴 드롭다운 (미리보기 + 설치 안내)
-│   ├── widgets.py     # 프로퍼티 종류 → 위젯 (세 화면이 공유)
-│   └── fonts.py       # UI의 한글 렌더 가능 여부 판정
+│   ├── session.py     # Facade. The only thing a frontend calls
+│   ├── hit.py         # Click coordinates → edit target (direct manipulation)
+│   ├── drag.py        # Drag → property value
+│   ├── snap.py        # Snapping geometry (pure functions)
+│   ├── palette.py     # matplotlib's named colors
+│   ├── layout.py      # Grow the paper when the axes run off it
+│   └── typefaces.py   # Fonts usable in the figure (matplotlib's list)
+├── i18n/              # Message catalog. Qt-free, so core uses it too
+├── config.py          # User settings (language choice and so on)
+├── ui/qt/             # PySide6 adapter
+│   ├── direct.py      # Cursor · drag · in-place editing
+│   ├── minitoolbar.py # Context toolbar that appears where you select
+│   ├── targetdialog.py# Tabbed editor for a single target
+│   ├── fontpicker.py  # Font dropdown (preview + install guidance)
+│   ├── palette.py     # Color picker (named colors first)
+│   ├── widgets.py     # Property kind → widget (shared by three screens)
+│   └── fonts.py       # Whether the UI can render Korean
 └── cli.py
 ```
 
-`core`는 PySide6를 import하지 않는다. 이 경계가 나중에 웹이나 PowerPoint
-어댑터를 붙일 수 있게 하는 유일한 조건이다.
+`core` does not import PySide6. That boundary is the only thing making a web or
+PowerPoint adapter possible later.
 
-속성을 하나 추가하려면 `props.REGISTRY`만 고치면 된다. 인스펙터 위젯, 코드
-생성, 파싱이 전부 거기서 파생된다.
+To add a property, edit `props.REGISTRY` and nothing else. The inspector widget,
+code generation, and parsing all derive from it.
 
 ---
 
-## 실행 모드
+## Execution modes
 
-| 모드 | 동작 | 언제 |
+| Mode | Behavior | When |
 |---|---|---|
-| 인프로세스 (기본) | 스크립트를 figtune과 같은 인터프리터에서 `exec` | figtune이 분석 환경에 설치된 경우 |
-| 서브프로세스 (`--python`) | 지정한 인터프리터에서 실행 후 Figure를 pickle로 회수 | figtune이 다른 venv나 얼려진 앱인 경우 |
+| In-process (default) | `exec` the script in figtune's own interpreter | figtune is installed in your analysis environment |
+| Subprocess (`--python`) | Run in the given interpreter and recover the Figure by pickle | figtune lives in another venv or is a frozen app |
 
 ```bash
 figtune plot_fig3.py --python .venv/bin/python
 ```
 
-**왜 필요한가.** "이 스크립트는 작동한다"는 것은 *사용자 환경*에 대한 사실이지
-figtune의 인터프리터에 대한 사실이 아니다. figtune이 별도 venv나 PyInstaller
-번들 안에 있으면 `import seaborn`은 사용자의 site-packages가 아니라 앱의
-`sys.path`를 뒤진다. 그럴 때 스크립트를 사용자 환경에서 돌리고 결과 Figure만
-받아오면 해결된다.
+**Why it is needed.** "This script works" is a fact about *your* environment,
+not about figtune's interpreter. If figtune sits in a separate venv or a
+PyInstaller bundle, `import seaborn` searches the app's `sys.path` rather than
+your site-packages. Running the script in your environment and receiving only
+the resulting Figure solves it.
 
-**제약.** Figure pickle은 matplotlib 버전에 결합되어 있다. 양쪽 minor 버전이
-다르면 실행을 거부하고 이유를 알린다 — 조용히 깨진 Figure를 넘기지 않는다.
+**Limitation.** A Figure pickle is coupled to the matplotlib version. If the two
+minor versions differ, figtune refuses and says why — it will not hand you a
+quietly broken Figure.
 
 ---
 
-## 직접 조작
+## Direct manipulation
 
-Origin의 조작 모델을 옮겼다. **어디를 눌렀는지가 곧 무엇을 편집할지다.**
+Origin's interaction model, carried over. **Where you click is what you edit.**
 
-| 클릭한 곳 | 대상 | 열리는 범위 |
+| Where you click | Target | What opens |
 |---|---|---|
-| 제목 · 축라벨 | 글자 | 한 번 클릭이면 그 자리에 캐럿, 끌면 이동 |
-| 눈금 라벨 · 축선 | 축 | 눈금 + 보조눈금 + 축선 + 격자 + 범위 (5개 묶음) |
-| 범례 | 범례 | 끌어서 이동 (`best`는 끄는 순간 자리를 고정한다) |
-| 선 · 점 | 데이터 | 겹치면 고르게 한다 |
-| 플롯 빈 곳 | 레이어 | 고른 뒤 모서리를 끌어 크기 변경 |
-| 페이지 여백 | 페이지 | figure 크기 · 배경 |
+| Title · axis label | The text | One click puts a caret there; dragging moves it |
+| Tick labels · axis line | The axis | Ticks + minor ticks + axis line + grid + limits (5 at once) |
+| Legend | The legend | Drag to move (`best` fixes its place the moment you drag) |
+| Line · points | The data | Overlaps let you choose |
+| Empty plot area | The layer | Select, then drag a corner to resize |
+| Page margin | The page | Figure size · background |
 
-**한 대상이 여러 selector를 묶는다.** 축을 더블클릭하면 눈금·축선·격자·범위가
-한 화면에 온다 — 트리에서 서로 다른 가지를 네 번 오가는 것과 같은 일이지만,
-사용자가 '이 축'이라고 생각하는 단위에 맞는다. Origin의 Axis Dialog와 같은
-구조다.
+**One target bundles several selectors.** Double-clicking an axis brings ticks,
+axis line, grid, and limits onto one screen — the same work as visiting four
+different branches of the tree, but matched to the unit you think of as "this
+axis". Same structure as Origin's Axis Dialog.
 
-**세 겹으로 편집한다.** 선택하면 자주 쓰는 서너 개가 그 자리에 뜨고(미니
-툴바), `⋯` 나 더블클릭이면 전부 펼쳐지고(탭 대화상자), 오른쪽 패널은 늘
-켜져 있다. 무엇을 툴바에 올릴지는 `props.PRIMARY`가 정한다 — 다 넣으면
-툴바가 대화상자가 되어 존재 이유가 없어진다.
+**Editing has three layers.** Selecting pops the three or four most-used
+properties right there (mini toolbar), `⋯` or a double-click expands everything
+(tabbed dialog), and the right-hand panel is always on. What goes on the toolbar
+is decided by `props.PRIMARY` — put everything on it and the toolbar becomes a
+dialog, losing its reason to exist.
 
-### 클릭과 끌기를 가르는 것
+### What separates a click from a drag
 
-제목을 **한 번 클릭하면 캐럿**이고 **끌면 이동**이다. 누른 시점에는 어느
-쪽인지 알 수 없으므로 움직인 거리(3px)로 가른다. 캐럿만 놓고 타이핑 전에는
-spec을 건드리지 않으며, Esc면 되돌아간다.
+One click on a title is a **caret**; dragging **moves** it. At the moment of the
+press there is no way to know which, so the distance moved (3px) decides. Just
+placing a caret touches nothing in the spec until you type, and Esc reverts.
 
-### 커서가 무엇을 할 수 있는지 알린다
+### The cursor announces what is possible
 
-| 위치 | 커서 |
+| Position | Cursor |
 |---|---|
-| 제목 · 축라벨 · 범례 | ✛ 옮길 수 있다 |
-| 고른 축 상자의 변 | ↔ ↕ 크기를 바꿀 수 있다 |
-| 모서리 | ⤢ ⤡ |
+| Title · axis label · legend | ✛ can be moved |
+| Edge of a selected axes box | ↔ ↕ can be resized |
+| Corner | ⤢ ⤡ |
 
-**크기 조절 핸들은 고른 뒤에만 생긴다.** 늘 있으면 축선을 누르려는 클릭을
-가로채 축 편집으로 들어갈 수 없다.
+**Resize handles appear only after selection.** Always-on handles would
+intercept the click meant for the axis line, making axis editing unreachable.
 
-### 여럿을 함께 고른다
+### Selecting several at once
 
-캔버스에서 `Shift` 또는 `Ctrl` 클릭으로 여러 요소를 고른다. PowerPoint와 같이
-두 키는 같게 동작한다(토글-추가). 범위 선택은 트리가 맡는다.
+`Shift` or `Ctrl` click on the canvas selects multiple elements. As in
+PowerPoint, both keys behave the same (toggle-add). Range selection is the
+tree's job.
 
-여럿을 고르면 인스펙터가 **공통 속성만** 보여준다. 어느 하나에만 있는 속성을
-보여주면 바꿔도 일부에만 먹는다 — 화면에 보이는 것이 곧 전부에 적용되는
-것이어야 한다. 값이 갈리는 칸은 비워 둔다. 고른 것들은 통째로 끌어 옮길 수도
-있다.
+With several selected, the inspector shows **only shared properties**. Showing a
+property that only one of them has means changing it would apply to only some —
+what you see must be what applies to all. Fields whose values differ are left
+blank. The selection can also be dragged as a group.
 
-`Delete`로 지운다. 다만 **figtune이 넣은 텍스트만** 지울 수 있다 — 원본이
-만든 것은 지워도 재실행하면 되살아나므로 메뉴를 흐리게 둔다.
+`Delete` removes things — but **only text figtune inserted**. Anything the
+script created would come back on the next run, so the menu entry stays greyed
+out for those.
 
-### 끌면 다른 요소에 붙는다 (snap)
+### Dragging snaps to other elements (snap)
 
-모서리와 가운데에 맞춰지고, 무엇에 붙었는지 안내선으로 보여준다. `Alt`를
-누르고 끌면 붙지 않는다. 판정은 순수 기하 함수(`core/snap.py`)라 픽셀 없이
-검증한다.
+Edges and centers align, and a guide line shows what you snapped to. Hold `Alt`
+while dragging to suppress it. The decision is a pure geometry function
+(`core/snap.py`), so it is verified without pixels.
 
-### 색은 이름부터 고른다
+### Colors start from names
 
-색 칸을 누르면 matplotlib이 **이름을 가진 색**이 먼저 나온다. 기본 8색과
-Tableau 10색은 바로, CSS 148색은 `+`로 펼친다(이름으로 찾기 포함). 색상환만
-있으면 그림에 이미 쓰인 색을 다시 고를 수 없다 — `tab:blue`로 그린 선 옆에
-같은 파랑을 놓으려면 눈으로 맞춰야 한다.
+Clicking a color field shows matplotlib's **named colors** first. The 8 base
+colors and 10 Tableau colors are immediate; the 148 CSS colors expand with `+`
+(including find-by-name). With only a color wheel you cannot pick a color
+already used in the figure — placing the same blue next to a line drawn in
+`tab:blue` would mean matching it by eye.
 
-값은 늘 hex로 남는다. spec이 색을 hex 정규형으로 접으므로, 이름을 그대로
-흘려보내면 저장 직후 화면과 파일이 달라 보인다. 대신 견본 버튼이 이름을 함께
-찍어 준다(`tab:blue  #1f77b4`).
+Values are always stored as hex, since the spec folds colors into hex normal
+form; passing a name straight through would make the screen and the file
+disagree right after saving. The swatch button prints the name alongside
+instead (`tab:blue  #1f77b4`).
 
-### hover는 미리 계산한 지도를 본다
+### Hover reads a precomputed map
 
-`get_window_extent()`는 눈금 라벨마다 글자 배치를 다시 계산해서, 2패널 그림
-한 번 판정에 **12ms**가 든다. 마우스가 움직일 때마다 부르면 60fps 예산의
-3/4을 커서에 쓴다. 기하는 다시 그릴 때만 바뀌므로 그릴 때 한 번 재두고
-이후에는 사각형 비교만 한다.
+`get_window_extent()` re-lays out the glyphs of every tick label, costing
+**12ms** for one hit test on a two-panel figure. Calling it on every mouse move
+spends three quarters of a 60fps budget on the cursor. Geometry only changes on
+redraw, so it is measured once per draw and afterwards only rectangles are
+compared.
 
 ```
-hover  12.766 ms → 0.0099 ms   (예산의 76.4% → 0.06%)
-클릭                1.308 ms   (artist contains()가 대부분)
+hover  12.766 ms → 0.0099 ms   (76.4% → 0.06% of the budget)
+click                1.308 ms   (mostly artist contains())
 ```
 
-### 두 히스토리는 서로를 건드리지 않는다
+### The two histories never touch each other
 
-| 조작 | 담당 | 되돌리는 법 |
+| Action | Owner | How to undo |
 |---|---|---|
-| 확대 · 이동 (보기) | 툴바 히스토리 | 툴바 ← / 홈 |
-| 배치 · 글꼴 · 색 (편집) | figtune 히스토리 | Ctrl+Z |
+| Zoom · pan (viewing) | Toolbar history | Toolbar ← / Home |
+| Layout · font · color (editing) | figtune history | Ctrl+Z |
 
-matplotlib의 내비게이션 스택은 뷰 한계와 함께 **축 위치까지** 담았다가 함께
-되돌린다. 그대로 두면 툴바의 뒤로가기가 figtune으로 옮긴 축 상자를 화면에서만
-되돌려 놓고 spec은 그대로 남아 화면과 코드가 어긋난다. 그래서 툴바를 상속해
-보기만 되돌리게 했다.
+matplotlib's navigation stack stores **axes positions** alongside view limits
+and restores them together. Left alone, the toolbar's back button would revert
+an axes box you moved in figtune on screen only, leaving the spec as it was, so
+screen and code would disagree. The toolbar is therefore subclassed to restore
+views only.
 
-반대로 확대·이동으로 바뀐 범위는 **spec에 기록한다.** 기록하지 않으면 내보낸
-그림에는 확대가 들어가는데 생성 코드에는 없어, '화면과 코드가 같다'는 보장이
-깨진다. 스크립트가 낸 보기를 기준선으로 잡아 달라진 것만 남기므로, 손대지
-않은 그림에 override가 생기지는 않는다.
+Conversely, limits changed by zoom and pan **are recorded in the spec.** Without
+that, the exported image would contain the zoom while the generated code would
+not, breaking the guarantee that screen and code agree. The view the script
+produced is used as the baseline and only differences are stored, so an
+untouched figure never acquires overrides.
 
-### 종이는 내용에 맞춰진다
+### The paper fits the content
 
-규칙은 하나다. **종이 = 모든 구성요소의 경계 + 여백(0.1in).** 네 방향이 같게
-동작하고, 늘기도 줄기도 한다. 제목을 올리면 위가 늘고, 처음보다 내리면
-처음보다 줄어든다.
+There is one rule: **paper = bounding box of every component + margin (0.1in).**
+All four directions behave alike, and it shrinks as well as grows. Raise the
+title and the top grows; lower it past where it started and the paper ends up
+smaller than it began.
 
-경계는 제목·축라벨·눈금·범례를 포함한 tight bbox다. 축 상자만 재면 상자가
-`[0,1]` 안이어도 글자는 밖으로 나가 잘린다.
+The bounding box is the tight bbox including title, axis labels, ticks, and
+legend. Measuring only the axes box means text runs outside and clips even when
+the box is inside `[0,1]`.
 
-계산은 **인치**로 한다. figure 좌표(0~1)로 하면 종이 크기가 바뀌는 순간 같은
-0.5가 다른 물리 위치를 뜻해, 건드리지 않은 패널이 따라 움직인다. 종이 크기를
-바꾸면 matplotlib이 배치를 다시 잡으므로 수렴할 때까지 최대 세 번 반복한다
-(실측 두 번).
+The arithmetic is done in **inches**. In figure coordinates (0–1) the same 0.5
+means a different physical position the moment the paper size changes, so
+untouched panels would drift. Changing the paper size makes matplotlib re-lay
+out, so it iterates up to three times until it converges (two in practice).
 
-> 배치를 처음 끌면 스크립트가 남긴 여백이 이 규칙에 맞춰 다시 잡힌다.
-> 판형을 고정하고 싶으면 인스펙터에서 `크기 (in)`을 지정한다.
+> The first time you drag the layout, the margins your script left are recomputed
+> under this rule. To pin the format, set `Size (in)` in the inspector.
 
 ---
 
-## 언어와 글꼴
+## Language and fonts
 
-한국어와 영어를 지원한다. 언어는 이 순서로 정해진다.
+Korean and English are supported. The language is decided in this order.
 
 ```
---lang  >  FIGTUNE_LANG  >  설정파일  >  시스템 로케일  >  한국어
+--lang  >  FIGTUNE_LANG  >  config file  >  system locale  >  Korean
 ```
 
 ```bash
@@ -517,138 +556,147 @@ figtune --lang en plot_fig3.py
 FIGTUNE_LANG=en figtune plot_fig3.py
 ```
 
-GUI는 `언어` 메뉴에서 바로 바꾼다. 재시작할 필요 없고 선택은
-`~/.config/figtune/config.json`에 남는다. 메뉴의 언어 이름은 늘 그 언어로
-적는다(한국어 / English) — 읽을 수 없는 언어에 갇혔을 때 빠져나올 길이어야
-하기 때문이다.
+The GUI switches from the `Language` menu with no restart, and the choice is
+kept in `~/.config/figtune/config.json`. Language names in the menu are always
+written in that language (한국어 / English) — it has to be the way out when you
+are stuck in a language you cannot read.
 
-### 글꼴이 없으면 영어로 내려앉는다
+### Without fonts it falls back to English
 
-WSL 기본 이미지나 슬림 컨테이너에는 CJK 글꼴이 없다. Qt는 글자를 못 그려도
-예외를 내지 않고 조용히 네모(□)를 찍기 때문에, 화면 전체가 깨져도 사용자는
-원인을 알 수 없다.
+Base WSL images and slim containers have no CJK fonts. Qt raises no exception
+when it cannot draw a glyph; it quietly prints a box (□), so the whole screen
+can break with no way for the user to know why.
 
-그래서 시작할 때 한 번 재본다. 한글을 그릴 수 없으면 UI를 영어로 내리고
-설치 명령을 알린다. 배포판을 보고 명령을 고른다.
+So it is measured once at startup. If Korean cannot be drawn, the UI drops to
+English and the install command is shown, chosen by distribution.
 
 ```
-이 환경에는 한글 글꼴이 없어 한국어 글자가 네모로 표시됩니다.
-화면을 영어로 표시했습니다.
+This environment has no Korean font, so Korean text appears as boxes.
+The interface has been switched to English.
 
   sudo apt install -y fonts-noto-cjk fonts-nanum && fc-cache -f
 ```
 
-글꼴이 없는데 메뉴에서 한국어를 고르면 **바꾸지 않고 이유를 알린다.** 바꿔
-주면 메뉴까지 네모가 되어 되돌릴 길이 막히기 때문이다.
+If you pick Korean from the menu without the fonts, figtune **refuses and says
+why.** Switching anyway would turn the menu itself into boxes, closing off the
+way back.
 
-판정은 `QFontMetrics.inFont()`로 한다. Qt의 폰트 폴백까지 반영하므로 '실제로
-그려지는가'를 직접 재고, `QFontDatabase.families()`만 보면 기본 글꼴이
-폴백으로 한글을 그리는 경우를 놓친다.
+The check uses `QFontMetrics.inFont()`, which accounts for Qt's font fallback
+and therefore measures "does this actually draw". Looking only at
+`QFontDatabase.families()` misses the case where the default font renders Korean
+through a fallback.
 
-> matplotlib **캔버스 안**의 한글은 별개다. 그림에 한글을 쓰려면 스크립트에서
-> `plt.rcParams["font.family"]`를 직접 지정해야 한다. figtune은 표현만
-> 손대므로 그 선택은 스크립트의 몫이다.
+> Korean **inside the matplotlib canvas** is a separate matter. To use Korean in
+> the figure, set `plt.rcParams["font.family"]` in your script. figtune only
+> touches presentation, so that choice belongs to the script.
 
-### 그림 안의 글꼴
+### Fonts inside the figure
 
-글꼴 목록은 **matplotlib 기준**이다. 그림 속 글자를 그리는 쪽이 matplotlib이라,
-Qt가 아는 목록을 그대로 보여주면 고른 뒤 조용히 대체 글꼴로 그려진다.
+The font list is **matplotlib's**. matplotlib is what draws the text in the
+figure, so showing Qt's list would mean your choice is quietly substituted.
 
-드롭다운은 각 글꼴을 **자기 글꼴로** 그린다. 한글을 그릴 수 있는 것에는
-`AaBbCc 123 가나다` 표본이 붙어, 이름만 보고 짐작하지 않아도 된다. `+` 버튼은
-아직 없는 추천 글꼴과 **설치 명령**을 보여준다 — figtune은 글꼴을 내려받지
-않는다. 도구가 조용히 외부에 접속하면 사내망이나 오프라인에서 동작이 예측
-불가능해지고 라이선스 책임도 따라온다.
+The dropdown draws each font **in itself**. Fonts that can render Korean carry
+an `AaBbCc 123 가나다` sample, so you need not guess from the name. The `+`
+button shows recommended fonts you do not have yet, along with **install
+commands** — figtune does not download fonts. A tool that quietly reaches out to
+the network behaves unpredictably on an intranet or offline, and brings license
+responsibility with it.
 
-`기본 글꼴`을 지정하면 spec의 `rcparams`에 실려 생성 코드에도 나간다. 다른
-사람이 그 코드를 돌려도 같은 글꼴이 나온다.
+Setting a `default font` rides along in the spec's `rcparams` and reaches the
+generated code, so someone else running that code gets the same font.
 
-**matplotlib은 글꼴 목록을 캐시하고, 새로 깔아도 갱신하지 않는다.** 이 프로젝트를
-만들던 머신에서도 나눔 글꼴 42개를 깔고 나서 matplotlib은 여전히 한글 글꼴이
-하나도 없다고 답했다 — 캐시가 두 달 전 것이었다. 그래서 열 때마다 실제 디스크와
-대조해 어긋나면 조용히 다시 만든다(검사 12ms, 재생성 148ms).
+**matplotlib caches its font list and does not refresh it when you install
+fonts.** On the machine this project was built on, installing 42 Nanum fonts
+still left matplotlib reporting no Korean fonts at all — the cache was two
+months old. So the cache is compared against the actual disk on every open and
+quietly rebuilt when they disagree (12ms to check, 148ms to rebuild).
 
-### 수식
+### Math
 
-matplotlib mathtext를 그대로 쓴다. 구분자는 **단일 `$`** 다.
+matplotlib mathtext, unchanged. The delimiter is a **single `$`**.
 
 ```
 $\frac{dC}{dt} = k(C_\infty - C)$
-농도 $C_{\mathrm{max}}$ (mg L$^{-1}$)      ← 한글과 섞어도 된다
+Concentration $C_{\mathrm{max}}$ (mg L$^{-1}$)
 ```
 
-`$$...$$`는 파싱 오류가 난다. 제자리 편집기에 그대로 타이핑하면 된다.
+`$$...$$` is a parse error. Type it directly into the in-place editor.
 
-### 산출물은 언어를 타지 않는다
+### Artifacts are language-independent
 
-생성되는 `*_style.py`와 병합 스크립트는 **항상 영어**다. 사용자 언어에 따라
-파일 바이트가 달라지면 정규형이 보장하는 결정성이 깨지고, 같은 spec에서
-사람마다 다른 diff가 나온다. 회귀 테스트로 못박아 두었다.
-
----
-
-## 알려진 제약
-
-- **임의 코드 실행.** 인프로세스 모드는 스크립트를 격리 네임스페이스에서
-  `exec`한다. 라이브 프리뷰에 필요하지만 신뢰할 수 있는 파일만 열어야 한다.
-  서브프로세스 모드는 별도 프로세스라 이 점에서 더 안전하다.
-- **화면 dpi와 출력 dpi는 별개다.** spec의 `dpi`는 export에만 쓰이고, 화면은
-  뷰포트에 맞춘 표시 배율로 그린다. 같은 값으로 묶으면 figure가 캔버스를
-  넘어가 잘린다.
-- **rcParams는 소급 적용되지 않는다.** 이미 만들어진 artist에는 반영되지
-  않으므로 개별 override로 처리한다.
-- `constrained_layout`이 켜진 상태의 수동 위치 조정은 충돌할 수 있다.
-- seaborn artist는 순서가 문서화되어 있지 않다. 지문 검증이 이를 보완한다.
-- **3D 축의 z라벨과 z눈금은 트리에 없다.** 그래서 "그림 전체" 글꼴·크기
-  바꾸기가 3D 그림의 z축 글자만 건너뛴다.
-- 합칠 때 패널의 코드를 복사해 넣으므로, 패널을 고친 뒤에는 다시 합쳐야 한다.
-- 배치를 처음 끌면 스크립트가 남긴 여백이 `layout.MARGIN`(0.1in)으로 다시
-  잡힌다. "종이 = 내용의 경계 + 여백" 규칙을 하나로 유지한 대가다.
+The generated `*_style.py` and merge scripts are **always English**. If file
+bytes varied with the user's language, the determinism the normal form
+guarantees would break and the same spec would produce different diffs for
+different people. A regression test pins this down.
 
 ---
 
-## 테스트
+## Known limitations
+
+- **Arbitrary code execution.** In-process mode `exec`s your script in an
+  isolated namespace. It is required for live preview, but only open files you
+  trust. Subprocess mode is safer in this respect, being a separate process.
+- **Screen dpi and output dpi are separate.** The spec's `dpi` is used for
+  export only; the screen draws at a display scale fitted to the viewport. Tying
+  them together makes the figure overflow the canvas and clip.
+- **rcParams do not apply retroactively.** They do not reach artists that
+  already exist, so per-element overrides are used instead.
+- Manual positioning can conflict with `constrained_layout` when it is enabled.
+- seaborn artist ordering is undocumented. Fingerprint verification compensates.
+- **The z-label and z-ticks of a 3D axes are not in the tree.** So "everywhere"
+  font and size changes skip the z-axis text of a 3D figure.
+- Merging copies each panel's code in, so editing a panel means merging again.
+- The first layout drag resets the margins your script left to `layout.MARGIN`
+  (0.1in). That is the price of keeping "paper = content bounds + margin" as a
+  single rule.
+
+---
+
+## Tests
 
 ```bash
 python -m pytest tests/ -q
 ```
 
-가장 중요한 네 가지를 못박아 두었다.
+Four things are pinned down above all.
 
-1. **왕복 무손실** — spec → 코드 → spec 에서 값이 하나도 사라지지 않는다.
-2. **생성 코드 실제 실행** — 훅이 걸린 스크립트를 별도 프로세스에서 돌린
-   결과가 GUI 렌더와 바이트 단위로 같다. 문법만 맞고 동작이 다르면 도구
-   전체가 거짓말이 된다.
-3. **편집 순서 무관성** — `ax.set_title(text, pad=)`은 내부에서 폰트 속성을
-   rcParams 기본값으로 되돌린다. 그래서 '굵게 → 여백' 순으로 편집하면 굵기가
-   조용히 사라졌다. 편집 중 화면과 재실행 결과가 갈리는 버그라 회귀 테스트로
-   고정했다.
-4. **산출물의 언어 독립성** — 같은 spec은 UI 언어와 무관하게 같은 바이트를
-   낸다. 번역은 조용히 썩기 때문에, 카탈로그 누락·잉여 키·자리표시자 유실과
-   `_t()` 밖에 남은 한국어까지 함께 검사한다.
+1. **Lossless round trip** — not one value disappears in spec → code → spec.
+2. **The generated code actually runs** — running the hooked script in a
+   separate process produces output byte-identical to the GUI render. Code that
+   merely parses but behaves differently would make the whole tool a lie.
+3. **Edit order does not matter** — `ax.set_title(text, pad=)` internally resets
+   font properties to the rcParams defaults, so editing "bold, then padding"
+   used to lose the bold silently. That is a bug where the screen and a re-run
+   diverge, so it is nailed down by a regression test.
+4. **Language independence of artifacts** — the same spec produces the same
+   bytes regardless of UI language. Translations rot quietly, so the suite also
+   checks for missing catalog entries, surplus keys, lost placeholders, and
+   Korean left outside `_t()`.
 
 ---
 
-## PowerPoint 연동
+## PowerPoint integration
 
-IguanaTeX의 구조를 따른다. 그림과 함께 **그것을 만든 소스를 도형에 심어두고**,
-도형을 골라 다시 편집한다. 소스는 도형 alt text에 압축되어 들어가므로(보통
-1KB 미만) 프레젠테이션을 옮겨도 따라다닌다. figtune이 없는 컴퓨터에서도 발표는
-되고, 편집만 figtune을 요구한다.
+The structure follows IguanaTeX: alongside the image, **the source that made it
+is embedded in the shape**, and selecting the shape reopens it for editing. The
+source is compressed into the shape's alt text (usually under 1KB), so it
+travels with the presentation. A computer without figtune can still present;
+only editing requires figtune.
 
-가장 쓸모 있는 기능은 **덱 전체 갱신**이다. 데이터나 모델이 바뀌면 슬라이드에
-박힌 그림을 하나씩 다시 만들어 붙이는 대신 한 줄로 끝낸다.
+The most useful feature is **refreshing a whole deck.** When the data or the
+model changes, instead of regenerating and re-pasting each embedded figure, one
+line does it.
 
 ```bash
 figtune refresh deck.pptx
 ```
 
-각 그림의 원본 스크립트를 다시 돌려 재생성하고, **위치·크기·회전·z순서를
-보존한 채** 갈아끼운다. 발표자가 슬라이드에서 손으로 맞춰둔 배치를 재생성
-때문에 잃으면 도구를 쓸 이유가 없다. 스크립트를 못 찾으면 그 그림만 건너뛰고
-사유를 보고한다.
+Each figure's source script is re-run and regenerated, then swapped in **with
+position, size, rotation, and z-order preserved.** If regeneration cost the
+presenter the placement they arranged by hand, there would be no reason to use
+the tool. Figures whose script cannot be found are skipped with a reason.
 
-PowerPoint 없이 python-pptx만으로도 쓸 수 있다.
+It works with python-pptx alone, without PowerPoint.
 
 ```python
 from figtune.office import pptx_link as PL
@@ -658,57 +706,63 @@ PL.insert(slide, "fig.png",
           left=Inches(1), top=Inches(1), width=Inches(6))
 ```
 
-### 공유 안전성
+### Safe to share
 
-슬라이드에는 **진짜 그림이 박힌다.** spec은 alt text에 메타데이터로만 얹히고,
-이미지는 pptx 안에 임베드된다(외부 링크가 아니다). 따라서 figtune이 없는
-컴퓨터에서도 그냥 사진으로 보이고 발표된다. IguanaTeX와 같은 성질이며,
-테스트로 잠가두었다 — 외부 링크로 바뀌면 실패한다.
+**A real image goes into the slide.** The spec rides along as alt-text metadata
+only, and the image is embedded in the pptx, not linked externally. So a
+computer without figtune simply sees a picture and presents it. Same property as
+IguanaTeX, and locked down by a test — it fails if this ever becomes an external
+link.
 
-### 벡터 출력 (선택, 렌더링 미검증)
+### Vector output (optional, rendering unverified)
 
-`vector=True`로 넣으면 SVG를 임베드하되 **PNG 대체본을 함께** 넣는다.
-OOXML은 이를 다음 구조로 담는다.
+With `vector=True` an SVG is embedded **together with a PNG fallback**. OOXML
+carries this as:
 
 ```xml
-<a:blip r:embed="rIdPng">              <!-- 구형 뷰어가 보는 것 -->
+<a:blip r:embed="rIdPng">              <!-- what older viewers see -->
   <a:extLst>
     <a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">
-      <asvg:svgBlip r:embed="rIdSvg"/> <!-- PowerPoint 365가 그리는 것 -->
+      <asvg:svgBlip r:embed="rIdSvg"/> <!-- what PowerPoint 365 draws -->
     </a:ext>
   </a:extLst>
 </a:blip>
 ```
 
-SVG를 모르는 뷰어는 PNG를 보므로 공유는 여전히 안전하다. 패키지 구조(파트,
-관계, 콘텐츠 타입, 확장 GUID)는 테스트로 확인했으나 **실제 PowerPoint에서
-벡터로 렌더되는지는 확인하지 못했다** — 리눅스 컨테이너에 PowerPoint가 없다.
-기본값은 PNG이며 벡터는 명시적으로 켜야 한다.
+A viewer that does not know SVG sees the PNG, so sharing stays safe. The package
+structure (parts, relationships, content types, extension GUID) is verified by
+tests, but **whether PowerPoint actually renders it as vector has not been
+confirmed** — there is no PowerPoint in a Linux container. The default is PNG;
+vector must be turned on explicitly.
 
-SVG와 PNG는 반드시 같은 Session에서 뽑는다. 따로 렌더하면 난수나 시각에
-의존하는 스크립트에서 두 파일의 내용이 어긋난다.
+The SVG and the PNG are always taken from the same Session. Rendering them
+separately would let the two files disagree for scripts that depend on random
+numbers or the clock.
 
-### 애드인 (미검증)
+### Add-in (unverified)
 
-`figtune/office/FigTune.bas`가 `.ppam` VBA 애드인 소스다. 리본에서 새 그림
-삽입 / 기존 그림 편집 / 덱 갱신을 제공한다. **이 VBA는 PowerPoint에서 실행
-검증된 적이 없다** — 리눅스에서 작성되었다. 파이썬 쪽(`edit`/`render`/`refresh`
-서브커맨드와 `vba_bridge`)은 테스트를 통과했으니, VBA는 Windows에서 직접
-돌려보며 다듬어야 한다. 특히 `Shell` 대기 처리와 경로 인용을 확인할 것.
+`figtune/office/FigTune.bas` is the `.ppam` VBA add-in source. It offers insert,
+edit, and refresh from the ribbon. **This VBA has never been run in
+PowerPoint** — it was written on Linux. The Python side (the `edit`/`render`/
+`refresh` subcommands and `vba_bridge`) passes its tests, so the VBA needs to be
+exercised on Windows and polished. Check the `Shell` wait handling and path
+quoting in particular.
 
-VBA에는 zlib이 없다. payload 인코딩을 VBA에서 재구현하면 파이썬 쪽과 어긋날
-위험이 커서, `figtune.office.vba_bridge`에 위임하고 애드인은 파일만 주고받는다.
+VBA has no zlib. Reimplementing the payload encoding in VBA would risk drifting
+from the Python side, so it delegates to `figtune.office.vba_bridge` and the
+add-in only passes files around.
 
 ---
 
-## 로드맵
+## Roadmap
 
-- **v1** — 리눅스 릴리스. 여러 figure 배치 처리는 이미 있다(위 "여러 figure
-  합치기"). 스타일 프로파일 저장·재적용은 범위에서 뺐다 — spec의 키가 위치
-  기반(`ax0.line0`)이라 다른 그림에 그대로 얹으면 엉뚱한 계열에 서식이
-  붙는다. 옮길 수 있는 부분만 담으려면 별도의 패턴 문법이 필요한데, 그만한
-  값을 하지 않는다고 판단했다.
-- **v2** — seaborn semantic 레이어, 웹 프론트엔드 어댑터
-- **v3** — VBA 애드인 실검증, Mac 지원, EMF 벡터 출력(Inkscape 경유)
+- **v1** — Linux release. Batch layout of several figures is already here (see
+  "Merging figures"). Saving and reapplying style profiles was dropped from
+  scope: spec keys are positional (`ax0.line0`), so laying one figure's spec on
+  another puts formatting on the wrong series. Capturing only the portable part
+  would need a separate pattern language, which was judged not worth it.
+- **v2** — seaborn semantic layer, web frontend adapter
+- **v3** — VBA add-in verified for real, Mac support, EMF vector output (via
+  Inkscape)
 
 MIT

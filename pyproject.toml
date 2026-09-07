@@ -5,7 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "figtune"
 dynamic = ["version"]
-description = "matplotlib figure를 GUI로 미세조정하고 재현 가능한 코드로 남기는 도구"
+# PyPI·pip show·검색 결과에는 이 한 줄만 실린다. 한 언어밖에 담기지 않는
+# 자리이므로 영어로 쓴다. 한국어 설명은 README.ko.md에 있다.
+description = "Fine-tune a matplotlib figure in a GUI and keep the result as reproducible code"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
