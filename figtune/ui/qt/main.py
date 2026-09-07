@@ -122,6 +122,7 @@ class Canvas(FigureCanvasQTAgg):
         self._map = None            # hit.HitMap — 다시 그릴 때까지 유효
         self._drag = None           # (core.drag.Drag, 시작 override 값)
         self._pending = None        # 끌기인지 제자리 편집인지 아직 모른다
+        self._kept_many = False     # 여럿을 고른 채로 눌렀는가
         self.editor = direct.InPlaceEditor(self)
         self.editor.committed.connect(self._commit_text)
         self.bar = MiniToolbar(self)
@@ -197,11 +198,21 @@ class Canvas(FigureCanvasQTAgg):
             # 고르기만 한다. 더하려고 누른 것이지 옮기거나 고치려는 것이 아니다.
             self.win.toggle_path(target.path)
             return
-        self.win.select(target.path)
+        # 이미 고른 것들 중 하나를 누른 것이면 선택을 유지한다. 여기서
+        # 하나로 줄이면 함께 옮기려던 것이 잡은 것 하나만 움직인다.
+        # 움직이지 않고 떼면 그때 하나로 줄인다 — PowerPoint와 같다.
+        picked = self.win.selection()
+        self._kept_many = target.path in picked and len(picked) > 1
+        if not self._kept_many:
+            self.win.select(target.path)
         if event.dblclick:
             self.open_dialog(target)
             return
-        self._show_bar(target, event)
+        if not self._kept_many:
+            # 여럿을 고른 채로는 막대를 내지 않는다. 막대는 하나를 고치는
+            # 도구라, 인스펙터가 전부를 고치는 동안 옆에 있으면 어느 쪽이
+            # 적용되는지 알 수 없다.
+            self._show_bar(target, event)
         # 제목·라벨·범례는 '한 번 클릭 = 캐럿'과 '끌어서 이동'을 같은 제스처로
         # 요구한다. 누른 시점에는 어느 쪽인지 알 수 없으므로 미뤄 두고,
         # 움직이면 이동, 안 움직이고 떼면 편집으로 가른다.
@@ -373,22 +384,52 @@ class Canvas(FigureCanvasQTAgg):
 
     # --- 끌기 -------------------------------------------------------------
 
+    @staticmethod
+    def _moved_prop(d) -> str:
+        return "bbox_to_anchor" if d.kind == "legend" else "position"
+
+    def _drag_targets(self, target):
+        """이 끌기가 옮길 것들. 잡은 것이 먼저다.
+
+        잡은 것이 이미 고른 것들 중 하나면 나머지도 함께 따라온다 —
+        PowerPoint와 같다. 하나만 움직이면 여러 개를 고른 것이 무의미해지고
+        나머지를 같은 거리만큼 손으로 맞춰야 한다.
+
+        고르지 않은 것을 잡았을 때는 그것 하나다. 이때는 _press가 이미
+        선택을 그것으로 바꿔 두었다.
+        """
+        out = [target]
+        picked = self.win.selection()
+        if len(picked) > 1 and target.path in picked:
+            for path in picked:
+                if path == target.path:
+                    continue
+                t = hit.target_for_path(self.figure, path)
+                if t is not None:
+                    out.append(t)
+        return out
+
     def _start_drag(self, target, event):
-        d, pins = drag.begin(self.figure, target, event.x, event.y)
-        if d is None:
+        drags, extras = [], []
+        for t in self._drag_targets(target):
+            d, pins = drag.begin(self.figure, t, event.x, event.y)
+            if d is None:
+                continue
+            # 끌기에 딸린 확정값(범례 loc 등)은 히스토리에 따로 쌓지 않는다.
+            # 따로 쌓으면 끌기 한 번을 되돌리는 데 실행 취소가 두 번 든다.
+            for pin in pins:
+                was = self.win.session.spec.of(pin.path).get(pin.prop)
+                self.win.session.set_prop(pin.path, pin.prop, pin.value,
+                                          record=False)
+                extras.append(Command(pin.path, pin.prop, was, pin.value))
+            drags.append(d)
+        if not drags:
             return
-        # 끌기에 딸린 확정값(범례 loc 등)은 히스토리에 따로 쌓지 않는다.
-        # 따로 쌓으면 끌기 한 번을 되돌리는 데 실행 취소가 두 번 든다.
-        extras = []
-        for pin in pins:
-            was = self.win.session.spec.of(pin.path).get(pin.prop)
-            self.win.session.set_prop(pin.path, pin.prop, pin.value, record=False)
-            extras.append(Command(pin.path, pin.prop, was, pin.value))
         # 직전 편집과 한 칸으로 합쳐지면 실행 취소가 둘을 한꺼번에 되돌린다
         self.win.session.history.seal()
-        prop = "bbox_to_anchor" if d.kind == "legend" else "position"
-        before = self.win.session.recorded_value(d.path, prop)
-        self._drag = (d, before, extras)
+        befores = [self.win.session.recorded_value(d.path, self._moved_prop(d))
+                   for d in drags]
+        self._drag = (drags, befores, extras)
 
     def _motion(self, event):
         if self.viewing():
@@ -411,40 +452,67 @@ class Canvas(FigureCanvasQTAgg):
                 Qt.ArrowCursor))
 
     def _drag_to(self, event):
-        d = self._drag[0]
+        drags = self._drag[0]
         # 실제로 움직이기 시작했을 때만 막대를 치운다. 누르는 순간 치우면
         # 끌지 않고 고르기만 해도 사라진다.
         self.bar.hide_bar()
-        change = drag.update(self.figure, d, event.x, event.y)
-        if change is None:
+        last = None
+        for d in drags:
+            # 각자 자기 좌표계에서 같은 커서 이동을 잰다. 대상마다 단위가
+            # 달라도(축은 figure 비율, 텍스트는 축 좌표) 화면에서 간 거리는
+            # 같아진다.
+            change = drag.update(self.figure, d, event.x, event.y)
+            if change is None:
+                continue
+            # 끌기 도중에는 히스토리에 쌓지 않는다. 마우스 이동마다 한 칸씩
+            # 쌓이면 실행 취소 한 번이 1픽셀을 되돌리게 된다.
+            self.win.session.set_prop(change.path, change.prop, change.value,
+                                      record=False)
+            last = change
+        if last is None:
             return
-        # 끌기 도중에는 히스토리에 쌓지 않는다. 마우스 이동마다 한 칸씩
-        # 쌓이면 실행 취소 한 번이 1픽셀을 되돌리게 된다.
-        self.win.session.set_prop(change.path, change.prop, change.value,
-                                  record=False)
         self.draw_idle()
-        self.win.status(f"{change.path}.{change.prop} = "
-                        f"{[round(v, 3) for v in change.value]}")
+        self.win.status(
+            f"{last.path}.{last.prop} = {[round(v, 3) for v in last.value]}"
+            if len(drags) == 1 else _t("{n}개 이동 중", n=len(drags)))
+
+    def _collapse_to_pressed(self):
+        """움직이지 않고 뗐다 — 여럿 중 누른 하나만 고른 것으로 본다.
+
+        이것이 없으면 여러 개를 고른 뒤 그중 하나를 눌러도 선택이 그대로라
+        하나만 고치려는 사용자가 빠져나올 길이 없다.
+        """
+        if self._kept_many and self._target is not None:
+            self.win.select(self._target.path)
+        self._kept_many = False
 
     def _release(self, event):
         if self._pending is not None:
             target, x0, y0 = self._pending
             self._pending = None
+            self._collapse_to_pressed()
             self._open_editor(target, _at(event, x0, y0))
             return
         if self._drag is None:
+            self._collapse_to_pressed()
             return
-        d, before, extras = self._drag
+        drags, befores, extras = self._drag
         self._drag = None
-        if not d.moved:
+        if not any(d.moved for d in drags):
+            self._collapse_to_pressed()
             return
-        # 끌기 한 번이 실행 취소 한 칸이다
-        prop = "bbox_to_anchor" if d.kind == "legend" else "position"
-        after = self.win.session.recorded_value(d.path, prop)
-        extras += self._grow_paper()
+        self._kept_many = False
+        # 끌기 한 번이 실행 취소 한 칸이다 — 옮긴 것이 몇 개든.
+        cmds = []
+        for d, before in zip(drags, befores):
+            prop = self._moved_prop(d)
+            cmds.append(Command(d.path, prop, before,
+                                self.win.session.recorded_value(d.path, prop)))
+        extras = cmds[1:] + extras + self._grow_paper()
+        head = cmds[0]
         self.win.session.history.push(
-            Command(d.path, prop, before, after, extra=extras))
-        self.win.after_edit("fig" if extras else d.path)
+            Command(head.path, head.prop, head.old, head.new, extra=extras))
+        self.win.after_edit("fig" if extras else head.path)
         # 끌기가 끝났으니 막대를 다시 내준다 — 이어서 손볼 것이 있게 마련이다
         if self._target is not None:
             self._show_bar(self._target, event)

@@ -52,6 +52,34 @@ class Target:
         return self.selectors or (self.path,)
 
 
+# selector 종류 -> 끌기 대상 종류. 여기 없는 것은 옮길 수 없다.
+# (축은 상자를 옮기고, 텍스트는 좌표를, 범례는 앵커를 옮긴다.)
+_DRAG_KIND = {
+    "axes": "layer",
+    "text": "text", "figtext": "text", "txt": "text", "usertext": "text",
+    "legend": "legend", "figlegend": "legend",
+}
+
+
+def target_for_path(fig, path: str) -> Target | None:
+    """selector 하나를 끌기 대상으로 바꾼다. 못 옮기는 것이면 None.
+
+    캔버스에서 잡은 것 말고도 함께 고른 것들을 같이 옮기려면, 커서 아래에
+    없는 대상까지 Target으로 만들 수 있어야 한다.
+    """
+    try:
+        s = sel.parse(path)
+    except sel.SelectorError:
+        return None
+    kind = _DRAG_KIND.get(s.kind)
+    if kind is None:
+        return None
+    if kind == "layer" and s.axes is not None and s.axes >= len(fig.axes):
+        return None
+    return Target(kind=kind, path=path, label=path, cursor=MOVE,
+                  axes=s.axes, movable=True)
+
+
 # --- 기하 도우미 -----------------------------------------------------------
 
 def _renderer(fig):

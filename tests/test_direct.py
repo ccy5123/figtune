@@ -664,7 +664,7 @@ def test_selection_draws_a_box_around_the_target(win):
     ax = win.session.fig.axes[0]
     click(win.canvas, *center(win, ax.title))
     assert win.canvas.highlights()
-    _path, x, y, w, h = win.canvas.highlights()[0]
+    _path, _x, _y, w, h = win.canvas.highlights()[0]
     assert w > 0 and h > 0
 
 
@@ -985,7 +985,7 @@ def test_dragging_the_plot_area_moves_the_axes(win):
         # 축 상자는 figure 비율이다. 종이가 다시 맞춰지면 물리 크기가 같아도
         # 비율은 바뀌므로, 크기 비교는 인치로 해야 뜻이 있다.
         _x, _y, w, h = fig.axes[0].get_position().bounds
-        fw, fh = fig.get_size_inches()
+        fw, fh = (float(v) for v in fig.get_size_inches())
         return round(float(w * fw), 3), round(float(h * fh), 3)
 
     ax = fig.axes[0]
@@ -1206,3 +1206,94 @@ def test_mixed_kinds_still_share_the_basics(win):
     win.inspector.edited.emit("color", "#123456")
     assert win.session.spec.get("ax0.line0", "color") == "#123456"
     assert win.session.spec.get("ax0.grid.x", "color") == "#123456"
+
+
+# --- 여럿을 통째로 옮긴다 -----------------------------------------------------
+
+def test_dragging_moves_every_selected_axes(win, tmp_path, qapp):
+    """PowerPoint처럼 고른 것이 다 함께 따라와야 한다.
+
+    잡은 것 하나만 움직이면, 여러 개를 고른 것이 무의미해지고 나머지를
+    같은 거리만큼 손으로 맞춰야 한다.
+
+    절대 위치로는 가릴 수 없다 — 종이 맞추기가 축들을 다시 배치하므로
+    따라오지 않아도 값이 변한다. 같은 끌기를 하나만 고른 채로도 해 보고
+    ax1이 다른 자리에 놓이는지를 본다.
+    """
+    import shutil
+
+    from figtune.ui.qt.main import MainWindow
+
+    def run(paths):
+        script = tmp_path / f"{len(paths)}.py"
+        shutil.copy(EXAMPLE, script)
+        w = MainWindow(script)
+        w.canvas.draw()
+        w.select_paths(paths)
+        bb = w.session.fig.axes[0].get_window_extent()
+        x, y = bb.x0 + 40, bb.y0 + 25
+        drag(w.canvas, x, y, x, y + 30)          # 위로
+        got = [round(float(v), 4)
+               for v in w.session.fig.axes[1].get_position().bounds]
+        w.close()
+        return got
+
+    alone = run(["ax0"])
+    together = run(["ax0", "ax1"])
+    assert alone != together, "함께 고른 축이 따라오지 않았습니다"
+
+
+def test_moving_many_is_one_undo_step(win):
+    fig = win.session.fig
+    win.select_paths(["ax0", "ax1"])
+    steps = len(win.session.history)
+    bb = fig.axes[0].get_window_extent()
+    x, y = bb.x0 + 40, bb.y0 + 25
+    drag(win.canvas, x, y, x, y + 30)
+    assert len(win.session.history) - steps == 1
+
+    win.undo()
+    assert win.session.spec.of("ax0").get("position") is None
+    assert win.session.spec.of("ax1").get("position") is None
+
+
+def test_they_move_by_the_same_amount(win):
+    """따라오는 것이 다른 거리를 가면 상대 배치가 무너진다."""
+    fig = win.session.fig
+    win.select_paths(["ax0", "ax1"])
+    before = [float(ax.get_position().bounds[1]) for ax in fig.axes]
+    fh = float(fig.get_size_inches()[1])
+    before_in = [b * fh for b in before]
+
+    bb = fig.axes[0].get_window_extent()
+    x, y = bb.x0 + 40, bb.y0 + 25
+    drag(win.canvas, x, y, x, y + 30)
+
+    fh2 = float(fig.get_size_inches()[1])
+    now_in = [float(ax.get_position().bounds[1]) * fh2 for ax in fig.axes]
+    deltas = [round(n - b, 3) for n, b in zip(now_in, before_in)]
+    assert deltas[0] != 0, "아예 움직이지 않았습니다"
+    assert deltas[0] == deltas[1], f"서로 다른 거리를 갔습니다: {deltas}"
+
+
+def test_dragging_an_unselected_one_drops_the_selection(win):
+    """고르지 않은 것을 잡으면 그것 하나를 고른 것이다 — PowerPoint와 같다."""
+    fig = win.session.fig
+    win.select_paths(["ax0", "ax0.title"])
+    x, y = center(win, fig.axes[1].title)
+    drag(win.canvas, x, y, x + 40, y)
+    assert win.selection() == ["ax1.title"]
+    # ax0가 아니라 ax0.title로 본다 — 축 위치는 종이를 다시 맞추면서
+    # 어차피 다시 잡히므로, 따라 움직였는지를 가려내지 못한다.
+    assert win.session.spec.of("ax0.title").get("position") is None
+
+
+def test_mixed_kinds_move_together(win):
+    """축과 제목을 함께 골라도 둘 다 따라와야 한다."""
+    fig = win.session.fig
+    win.select_paths(["ax0", "ax0.title"])
+    bb = fig.axes[0].get_window_extent()
+    x, y = bb.x0 + 40, bb.y0 + 25
+    drag(win.canvas, x, y, x + 40, y)
+    assert win.session.spec.of("ax0").get("position") is not None
+    assert win.session.spec.of("ax0.title").get("position") is not None
