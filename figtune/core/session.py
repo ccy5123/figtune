@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,10 @@ from . import selector as sel
 from . import typefaces
 from .history import Command, History
 from .spec import Spec, UserText
+
+# user text의 존재 자체를 실행 취소에 싣기 위한 의사 속성.
+# 값은 asdict(UserText) 지문이거나, 없음을 뜻하는 None이다.
+EXISTS = "__exists__"
 
 
 @dataclass
@@ -272,6 +276,9 @@ class Session:
         if not path:
             return
         s = sel.parse(path)
+        if name == EXISTS:
+            self._set_existence(s.name, value)
+            return
         if value is not None:
             value = canon.value(s.kind, name, value)
 
@@ -304,18 +311,45 @@ class Session:
 
     # --- user text -------------------------------------------------------
 
+    def _set_existence(self, tid: str, snapshot: dict | None) -> None:
+        """user text를 있게 하거나 없게 한다.
+
+        생성·삭제를 (path, EXISTS, old, new) 한 쌍으로 표현하면 History를
+        건드리지 않고도 실행 취소에 실린다. snapshot은 asdict(UserText)이라
+        서식까지 담기므로, 되살릴 때 글자만 돌아오는 일이 없다.
+        """
+        self.spec.remove_text(tid)
+        if snapshot is not None:
+            self.spec.texts.append(UserText(**snapshot))
+            ap.sync_text(self.fig, self.spec, tid)
+        elif self.fig is not None:
+            for ax in self.fig.axes:
+                for cand in list(ax.texts):
+                    if getattr(cand, "_figtune_id", None) == tid:
+                        cand.remove()
+        self.refresh_tree()
+        self.dirty = True
+
     # 기본값은 번역하지 않는다. spec과 생성 코드에 그대로 실려 그림에 찍히므로,
     # 언어에 따라 달라지면 같은 spec이 사람마다 다른 그림을 낸다.
     def add_text(self, axes_index: int, text: str = "text",
-                 position=(0.5, 0.5), coords: str = "axes") -> str:
+                 position=(0.5, 0.5), coords: str = "axes",
+                 record: bool = True) -> str:
         tid = self.spec.new_text_id()
         self.spec.texts.append(UserText(id=tid, axes=axes_index, text=text,
                                         position=[float(position[0]), float(position[1])],
                                         coords=coords))
         ap.sync_text(self.fig, self.spec, tid)
         self.refresh_tree()
+        if record:
+            self.history.push(Command(sel.usertext(axes_index, tid), EXISTS,
+                                      None, self._snapshot(tid)))
         self.dirty = True
         return tid
+
+    def _snapshot(self, tid: str) -> dict | None:
+        t = self.spec.text_by_id(tid)
+        return asdict(t) if t is not None else None
 
     # move_text는 없다. usertext의 위치도 set_prop(path, "position", …)으로
     # 옮긴다 — 전용 경로를 두었더니 그 길에만 실행 취소와 종이 맞추기가
@@ -329,21 +363,44 @@ class Session:
         """
         return sel.parse(path).kind == "usertext"
 
-    def delete_text(self, tid: str) -> None:
+    def delete_text(self, tid: str, record: bool = True) -> None:
+        t = self.spec.text_by_id(tid)
+        if t is None:
+            return
+        before = asdict(t)
         ap.remove_text(self.fig, self.spec, tid)
         self.refresh_tree()
+        if record:
+            self.history.push(Command(sel.usertext(t.axes, tid), EXISTS,
+                                      before, None))
         self.dirty = True
 
     def add_panel_labels(self, template: str = "({a})", **style) -> list[str]:
-        """모든 axes에 (a)(b)(c) 라벨을 일괄 삽입한다."""
-        ids = []
+        """모든 axes에 (a)(b)(c) 라벨을 일괄 삽입한다.
+
+        패널이 몇 개든 실행 취소 한 칸이다. 라벨마다 쌓으면 되돌리는 데
+        패널 수만큼 눌러야 하고, 중간에 멈추면 일부 패널에만 라벨이 남는다.
+
+        서식까지 입힌 뒤에 지문을 뜬다. 그래야 되살릴 때 한 번에 완성된
+        모습으로 돌아온다 — 생성과 서식을 따로 쌓을 이유가 없다.
+        """
+        self.history.seal()
+        ids, cmds = [], []
         for i in range(len(self.fig.axes)):
             label = template.format(a=chr(ord("a") + i), A=chr(ord("A") + i), n=i + 1)
-            tid = self.add_text(i, label, position=(-0.15, 1.02), coords="axes")
+            tid = self.add_text(i, label, position=(-0.15, 1.02), coords="axes",
+                                record=False)
             path = sel.usertext(i, tid)
-            self.set_prop(path, "fontweight", style.get("fontweight", "bold"))
-            self.set_prop(path, "fontsize", style.get("fontsize", 11))
+            self.set_prop(path, "fontweight", style.get("fontweight", "bold"),
+                          record=False)
+            self.set_prop(path, "fontsize", style.get("fontsize", 11),
+                          record=False)
+            cmds.append(Command(path, EXISTS, None, self._snapshot(tid)))
             ids.append(tid)
+        if cmds:
+            self.history.push(Command(cmds[0].path, cmds[0].prop,
+                                      cmds[0].old, cmds[0].new,
+                                      extra=cmds[1:]))
         return ids
 
     # --- 히트테스트 ------------------------------------------------------

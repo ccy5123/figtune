@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 import pytest
 
 from figtune.core import parse
+from figtune.core import selector as sel
 from figtune.core.session import Session
 from figtune.core.spec import Spec, pyify
 
@@ -434,3 +435,71 @@ def test_commands_with_extras_never_collapse():
         h.push(Command("ax0.legend", "bbox_to_anchor", None, anchor,
                        extra=[Command("ax0.legend", "loc", None, "upper left")]))
     assert len(h) == 2
+
+
+# --- user text 생성·삭제도 실행 취소 대상이다 --------------------------------
+
+def test_adding_a_text_is_undoable(session):
+    """한때 add_text는 히스토리에 아무것도 남기지 않았다.
+
+    텍스트를 넣고 Ctrl+Z를 누르면 그 텍스트는 그대로 있고 그 전의 편집이
+    되돌아갔다. 사용자 눈에는 실행 취소가 엉뚱한 것을 되돌리는 것으로 보인다.
+    """
+    session.set_prop("ax0.line0", "color", "#c0392b")
+    steps = len(session.history)
+
+    tid = session.add_text(0, "hello", (0.4, 0.6))
+    assert len(session.history) - steps == 1
+    assert session.spec.text_by_id(tid) is not None
+
+    session.history.undo()
+    assert session.spec.text_by_id(tid) is None
+    assert not [t for t in session.fig.axes[0].texts
+                if getattr(t, "_figtune_id", None) == tid]
+    # 그 전의 편집은 건드리지 않았다
+    assert session.spec.of("ax0.line0").get("color") == "#c0392b"
+
+    session.history.redo()
+    t = session.spec.text_by_id(tid)
+    assert t is not None and t.text == "hello"
+    assert [round(v, 4) for v in t.position] == [0.4, 0.6]
+
+
+def test_undo_restores_a_deleted_text_with_its_style(session):
+    """지우기를 되돌리면 서식까지 그대로 돌아와야 한다.
+
+    글자만 살아 돌아오면 사용자는 서식을 다시 입혀야 하고, 그러면 실행
+    취소가 '되돌리기'가 아니라 '반쯤 되돌리기'가 된다.
+    """
+    tid = session.add_text(0, "note", (0.3, 0.3))
+    path = sel.usertext(0, tid)
+    session.set_prop(path, "fontsize", 14.0)
+    session.set_prop(path, "color", "#123456")
+
+    session.delete_text(tid)
+    assert session.spec.text_by_id(tid) is None
+
+    session.history.undo()
+    t = session.spec.text_by_id(tid)
+    assert t is not None
+    assert t.fontsize == 14.0 and t.color == "#123456"
+
+
+def test_panel_labels_are_one_undo_step(session):
+    """(a)(b)(c) 일괄 삽입은 한 번의 조작이다.
+
+    라벨마다 칸이 쌓이면 되돌리는 데 실행 취소를 패널 수만큼 눌러야 하고,
+    중간에서 멈추면 일부 패널에만 라벨이 남는다.
+    """
+    steps = len(session.history)
+    ids = session.add_panel_labels()
+    assert len(ids) == len(session.fig.axes)
+    assert len(session.history) - steps == 1
+
+    session.history.undo()
+    assert all(session.spec.text_by_id(t) is None for t in ids)
+
+    session.history.redo()
+    assert all(session.spec.text_by_id(t) is not None for t in ids)
+    # 서식도 함께 돌아온다
+    assert session.spec.text_by_id(ids[0]).fontweight == "bold"

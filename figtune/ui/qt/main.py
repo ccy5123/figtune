@@ -30,7 +30,7 @@ from ...core import hit  # noqa: E402
 from ...core import layout  # noqa: E402
 from ...core import selector as sel  # noqa: E402
 from ...core.history import Command  # noqa: E402
-from ...core.session import Session  # noqa: E402
+from ...core.session import EXISTS, Session  # noqa: E402
 from ...i18n import t as _t  # noqa: E402
 from . import direct  # noqa: E402
 from . import fonts  # noqa: E402
@@ -843,10 +843,21 @@ class MainWindow(QMainWindow):
         self.select(sel.usertext(ax_i, tid))
         self.mark_dirty()
 
+    @staticmethod
+    def _changes_membership(cmd) -> bool:
+        """이 커맨드가 요소를 만들거나 없앴는가.
+
+        값만 바뀐 경우까지 트리를 다시 세우면 펼침 상태가 매번 접힌다.
+        """
+        return any(c.prop == EXISTS for c in [cmd, *cmd.extra])
+
     def undo(self):
         cmd = self.session.history.undo()
         if cmd:
             self.canvas.draw_idle()
+            if self._changes_membership(cmd):
+                self.reload_tree()
+                self.select(None)
             self.refresh_inspector()
             self.sync_view_action()
             self.status(_t("실행 취소: {what}", what=cmd.describe()))
@@ -855,6 +866,9 @@ class MainWindow(QMainWindow):
         cmd = self.session.history.redo()
         if cmd:
             self.canvas.draw_idle()
+            if self._changes_membership(cmd):
+                self.reload_tree()
+                self.select(None)
             self.refresh_inspector()
             self.sync_view_action()
             self.status(_t("다시 실행: {what}", what=cmd.describe()))
