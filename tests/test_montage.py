@@ -29,6 +29,12 @@ ax.plot([0, 1, 2], [0, 1, 4], 'o-')
 ax.set_ylabel({ylab!r}); ax.set_xlabel('Time (h)'); ax.set_title({title!r})
 """
 
+MULTI = """import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+axes[0].plot([0, 1], [0, 1]); axes[0].set_title({title!r})
+axes[1].plot([0, 1], [1, 0])
+"""
+
 FUNCFORM = """import matplotlib.pyplot as plt
 
 def plot(ax):
@@ -164,14 +170,20 @@ def test_subplot_mode_yields_one_real_figure(tmp_path):
     assert "figtune" not in style.split('"""')[2]   # 본문에 런타임 의존 없음
 
 
-def test_subplot_mode_refuses_loudly_when_not_applicable(panels):
-    """조용히 모드 A로 떨어지면 어느 산출물을 보고 있는지 알 수 없게 된다."""
-    base, names = panels
+def test_subplot_mode_refuses_loudly_when_not_applicable(tmp_path):
+    """조용히 모드 A로 떨어지면 어느 산출물을 보고 있는지 알 수 없게 된다.
+
+    평범한 단일 axes 스크립트는 이제 자동으로 감싸진다. 진짜 못 합치는 것은
+    축을 여러 개 만드는 스크립트다 — 한 칸에 진짜 축으로 넣을 방법이 없다.
+    """
+    for i in range(2):
+        (tmp_path / f"m{i}.py").write_text(MULTI.format(title=f"p{i}"),
+                                           encoding="utf-8")
     ms = MontageSpec(rows=1, cols=2,
-                     panels=[PanelRef(script=n) for n in names[:2]])
+                     panels=[PanelRef(script=f"m{i}.py") for i in range(2)])
     with pytest.raises(ValueError) as e:
-        generate_subplot_script(ms, base / "m.py", base_dir=base)
-    assert "plot(ax)" in str(e.value)
+        generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+    assert "2개" in str(e.value)
 
 
 def test_merge_script_runs_without_figtune(tmp_path):
@@ -280,12 +292,12 @@ def test_merge_cli_refuses_and_explains(tmp_path, monkeypatch, capsys):
 
     for i in range(2):
         (tmp_path / f"p{i}.py").write_text(
-            PLAIN.format(size=(4, 3), ylab="y", title="t"), encoding="utf-8")
+            MULTI.format(title="t"), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     assert main(["merge", "p0.py", "p1.py", "-o", str(tmp_path / "m.py")]) == 1
     err = capsys.readouterr().err
-    assert "plot(ax)" in err
+    assert "2개" in err
     assert "--svg" in err                      # 대안을 알려준다
 
 
@@ -294,7 +306,7 @@ def test_merge_cli_svg_fallback(tmp_path, monkeypatch):
 
     for i in range(2):
         (tmp_path / f"p{i}.py").write_text(
-            PLAIN.format(size=(4, 3), ylab="y", title="t"), encoding="utf-8")
+            MULTI.format(title="t"), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     svg = tmp_path / "out.svg"
@@ -472,12 +484,11 @@ def test_a_good_panel_has_no_problem(tmp_path):
     assert panel_problem(p) is None
 
 
-def test_a_script_without_plot_is_reported(tmp_path):
+def test_a_multi_axes_script_is_reported(tmp_path):
     """합칠 수 없다는 것을 다 채우고 나서 알면 늦다."""
-    p = tmp_path / "plain.py"
-    p.write_text(PLAIN.format(size=(4, 3), ylab="y", title="t"),
-                 encoding="utf-8")
-    assert "plot(ax)" in panel_problem(p)
+    p = tmp_path / "multi.py"
+    p.write_text(MULTI.format(title="t"), encoding="utf-8")
+    assert "2개" in panel_problem(p)
 
 
 def test_a_script_using_file_is_reported(tmp_path):
@@ -556,3 +567,61 @@ def test_the_panel_label_still_lands_on_a_3d_axes(tmp_path):
     s = Session()
     s.open(out)
     assert any(t.get_text() == "(a)" for t in s.fig.axes[0].texts)
+
+
+# --- plot(ax) 없는 스크립트도 합친다 -------------------------------------------
+
+BARE = """import matplotlib.pyplot as plt
+
+SCALE = {scale}
+
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.plot([0, 1, 2], [0, SCALE, 2 * SCALE], 'o-')
+ax.set_title({title!r})
+plt.show()
+"""
+
+
+def test_a_bare_single_axes_script_is_no_longer_a_problem(tmp_path):
+    p = tmp_path / "bare.py"
+    p.write_text(BARE.format(scale=1.0, title="bare"), encoding="utf-8")
+    assert panel_problem(p) is None
+
+
+def test_bare_scripts_merge_and_draw(tmp_path):
+    """감싸기가 실제로 그려져야 한다 — 구문만 맞으면 소용없다."""
+    for i, name in enumerate(("one", "two")):
+        (tmp_path / f"{name}.py").write_text(
+            BARE.format(scale=i + 1.0, title=name), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=2, panels=[
+        PanelRef(script="one.py"), PanelRef(script="two.py")])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    assert [ax.get_title() for ax in s.fig.axes] == ["one", "two"]
+    # 모듈 수준 상수가 패널마다 따로 살아 있다
+    assert s.fig.axes[0].lines[0].get_ydata()[-1] == 2.0
+    assert s.fig.axes[1].lines[0].get_ydata()[-1] == 4.0
+
+
+def test_a_bare_script_does_not_make_its_own_figure(tmp_path):
+    """자기 figure를 만들면 병합 격자가 아니라 딴 데 그려진다."""
+    (tmp_path / "bare.py").write_text(
+        BARE.format(scale=1.0, title="bare"), encoding="utf-8")
+    ms = MontageSpec(rows=1, cols=1, panels=[PanelRef(script="bare.py")])
+    out = generate_subplot_script(ms, tmp_path / "m.py", base_dir=tmp_path)
+
+    s = Session()
+    s.open(out)
+    assert len(s.fig.axes) == 1, "축이 더 생겼습니다"
+
+
+def test_a_multi_axes_script_is_still_reported(tmp_path):
+    """2패널짜리를 한 칸에 진짜 축으로 넣을 방법이 없다 — 이유를 알린다."""
+    p = tmp_path / "two.py"
+    p.write_text("import matplotlib.pyplot as plt\n"
+                 "fig, axes = plt.subplots(1, 2)\n"
+                 "axes[0].plot([0, 1], [0, 1])\n", encoding="utf-8")
+    why = panel_problem(p)
+    assert why and "2개" in why

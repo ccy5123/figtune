@@ -451,19 +451,27 @@ MESSAGES = {
     "어려우면 벡터 없이 패널을 PNG로 합성하세요.":
         "SVG→PNG conversion needs cairosvg (pip install cairosvg). If you "
         "cannot install it, compose the panels as PNG without vectors.",
-    "다음 스크립트에 ax를 받는 함수가 없습니다:\n  {scripts}\n\n"
-    "각 스크립트에 다음 형태를 추가하세요:\n"
+    "다음 스크립트는 합칠 수 없습니다:\n  {scripts}\n\n"
+    "ax를 받는 함수를 노출하면 확실합니다:\n"
     "    def plot(ax):\n        ...\n"
     "    if __name__ == '__main__':\n"
     "        fig, ax = plt.subplots(); plot(ax)\n"
-    "그러면 단독 실행도 그대로 되고 병합도 가능해집니다.":
-        "These scripts have no function that takes ax:\n  {scripts}\n\n"
-        "Add this shape to each script:\n"
+    "단독 실행도 그대로 되고 병합도 가능해집니다.":
+        "These scripts cannot be merged:\n  {scripts}\n\n"
+        "Exposing a function that takes ax makes it certain:\n"
         "    def plot(ax):\n        ...\n"
         "    if __name__ == '__main__':\n"
         "        fig, ax = plt.subplots(); plot(ax)\n"
-        "Running them on their own still works, and merging becomes "
-        "possible.",
+        "Running it on its own still works, and merging becomes possible.",
+
+    # --- 자동 감싸기 ------------------------------------------------------
+    "해석하지 못했습니다: {err}": "could not parse it: {err}",
+    "이미 ax를 받는 함수가 있습니다 — 감쌀 필요가 없습니다.":
+        "it already has a function taking ax — no wrapping needed.",
+    "축을 {n}개 만드는 스크립트입니다. 한 칸에 진짜 축으로 넣을 수 "
+    "없습니다 — 칸 {n}개를 차지하게 하거나, 패널마다 파일을 나누세요.":
+        "this script creates {n} axes. They cannot go into one cell as real "
+        "axes — give it {n} cells, or split it into one file per panel.",
 
     # --- PowerPoint ------------------------------------------------------
     "payload 버전 {v}은 이 figtune보다 새롭습니다. 업데이트하세요.":
