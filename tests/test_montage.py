@@ -18,6 +18,7 @@ from figtune.core import montage as M
 from figtune.core.montage_build import (MontageSpec, PanelRef, build,
                                         can_use_subplot_mode,
                                         detect_plot_function,
+                                        panel_problem,
                                         generate_subplot_script)
 from figtune.core.session import Session
 
@@ -460,3 +461,32 @@ def test_merged_script_is_still_editable_by_figtune(tmp_path):
     s.save()
     style = (tmp_path / "m_style.py").read_text(encoding="utf-8")
     assert "set_color('#c0392b')" in style
+
+
+# --- 합칠 수 있는지 미리 본다 -------------------------------------------------
+
+def test_a_good_panel_has_no_problem(tmp_path):
+    p = tmp_path / "ok.py"
+    p.write_text(FUNCFORM.format(ylab="C", title="t"), encoding="utf-8")
+    assert panel_problem(p) is None
+
+
+def test_a_script_without_plot_is_reported(tmp_path):
+    """합칠 수 없다는 것을 다 채우고 나서 알면 늦다."""
+    p = tmp_path / "plain.py"
+    p.write_text(PLAIN.format(size=(4, 3), ylab="y", title="t"),
+                 encoding="utf-8")
+    assert "plot(ax)" in panel_problem(p)
+
+
+def test_a_script_using_file_is_reported(tmp_path):
+    p = tmp_path / "f.py"
+    p.write_text("from pathlib import Path\n"
+                 "D = Path(__file__).parent / 'd.csv'\n\n"
+                 "def plot(ax):\n    ax.plot([0, 1], [0, 1])\n",
+                 encoding="utf-8")
+    assert "__file__" in panel_problem(p)
+
+
+def test_a_missing_file_is_reported(tmp_path):
+    assert panel_problem(tmp_path / "nope.py")

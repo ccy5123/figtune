@@ -239,15 +239,38 @@ class MontageDialog(QDialog):
         self.grid.update()
         self._sync_buttons()
 
+    def candidates(self) -> list[tuple[str, str, str | None]]:
+        """놓을 수 있는 것들: (보일 이름, 경로, 안 되는 이유 또는 None).
+
+        합칠 수 없다는 것을 칸을 다 채우고 나서 알면 늦다. 목록에서 바로
+        보이고, 왜 안 되는지도 함께 나온다.
+        """
+        from ...core.montage_build import panel_problem
+
+        out = []
+        for doc in self.win.documents():
+            if doc.session.script is None:
+                continue
+            path = str(doc.session.script)
+            out.append((doc.name, path, panel_problem(path)))
+        return out
+
     def _choose_for(self, index: int):
         """빈 칸에 놓을 것을 고른다 — 열려 있는 탭들 중에서."""
         menu = QMenu(self)
         acts = {}
-        for doc in self.win.documents():
-            if doc.session.script is None:
-                continue
-            acts[menu.addAction(doc.name)] = str(doc.session.script)
-        if not acts:
+        cands = self.candidates()
+        for name, path, problem in cands:
+            act = menu.addAction(name if not problem
+                                 else f"{name} — {problem}")
+            if problem:
+                # 고를 수 없게 두되 이유를 남긴다. 목록에서 빼 버리면
+                # '내 파일이 왜 없지'가 된다.
+                act.setEnabled(False)
+                act.setToolTip(problem)
+            else:
+                acts[act] = path
+        if not cands:
             menu.addAction(_t("열려 있는 탭이 없습니다")).setEnabled(False)
         menu.addSeparator()
         browse = menu.addAction(_t("파일에서…"))
@@ -264,13 +287,32 @@ class MontageDialog(QDialog):
             path = acts.get(chosen)
             if path is None:
                 return
+        self.place(index, path)
+
+    def place(self, index: int, path: str) -> bool:
+        """칸에 그림을 놓는다. 놓을 수 없으면 이유를 알리고 놓지 않는다."""
+        from ...core.montage_build import panel_problem
+
+        problem = panel_problem(path)
+        if problem:
+            QMessageBox.warning(
+                self, _t("그림 합치기"),
+                _t("{name}은(는) 합칠 수 없습니다 — {why}\n\n"
+                   "각 스크립트에 다음 형태를 추가하세요:\n"
+                   "    def plot(ax):\n        ...\n"
+                   "    if __name__ == '__main__':\n"
+                   "        fig, ax = plt.subplots(); plot(ax)\n"
+                   "단독 실행도 그대로 되고 합치기도 가능해집니다.",
+                   name=Path(path).name, why=problem))
+            return False
         try:
             self.model.assign(index, path)
         except LayoutError as exc:
             self._warn(exc)
-            return
+            return False
         self.grid.update()
         self._sync_buttons()
+        return True
 
     # --- 만들기 -----------------------------------------------------------
 

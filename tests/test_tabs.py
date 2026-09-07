@@ -262,3 +262,41 @@ def test_the_composer_offers_the_open_tabs(composer):
     """+를 눌렀을 때 고를 것은 지금 열려 있는 탭들이다."""
     w, _dlg, scripts = composer
     assert [d.name for d in w.documents()] == [p.name for p in scripts]
+
+
+def test_unmergeable_tabs_are_shown_with_the_reason(composer, tmp_path):
+    """합칠 수 없다는 것을 칸을 다 채우고 나서 알면 늦다.
+
+    목록에서 빼 버리면 '내 파일이 왜 없지'가 되므로, 고를 수 없게 두되
+    이유를 함께 보여준다.
+    """
+    w, dlg, _s = composer
+    plain = tmp_path / "plain.py"
+    plain.write_text("import matplotlib.pyplot as plt\n"
+                     "fig, ax = plt.subplots()\n"
+                     "ax.plot([0, 1], [0, 1])\n", encoding="utf-8")
+    w.open_document(plain)
+
+    by_name = {n: why for n, _p, why in dlg.candidates()}
+    assert by_name["wide.py"] is None
+    assert "plot(ax)" in by_name["plain.py"]
+
+
+def test_placing_an_unmergeable_script_is_refused(composer, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    _w, dlg, _s = composer
+    plain = tmp_path / "plain.py"
+    plain.write_text("import matplotlib.pyplot as plt\n"
+                     "fig, ax = plt.subplots()\n", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: None))
+
+    assert dlg.place(0, str(plain)) is False
+    assert dlg.model.slots[0].ref is None
+
+
+def test_placing_a_good_script_works(composer):
+    _w, dlg, scripts = composer
+    assert dlg.place(0, str(scripts[0])) is True
+    assert dlg.model.slots[0].ref == str(scripts[0])

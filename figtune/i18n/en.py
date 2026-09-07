@@ -105,6 +105,20 @@ MESSAGES = {
 
     # --- 그림 합치기 ------------------------------------------------------
     "그림 합치기": "Merge figures",
+    "ax를 받는 plot(ax) 함수가 없습니다": "no plot(ax) function taking ax",
+    "읽지 못했습니다: {err}": "could not read it: {err}",
+    "{name}은(는) 합칠 수 없습니다 — {why}\n\n"
+    "각 스크립트에 다음 형태를 추가하세요:\n"
+    "    def plot(ax):\n        ...\n"
+    "    if __name__ == '__main__':\n"
+    "        fig, ax = plt.subplots(); plot(ax)\n"
+    "단독 실행도 그대로 되고 합치기도 가능해집니다.":
+        "{name} cannot be merged — {why}\n\n"
+        "Add this shape to the script:\n"
+        "    def plot(ax):\n        ...\n"
+        "    if __name__ == '__main__':\n"
+        "        fig, ax = plt.subplots(); plot(ax)\n"
+        "Running it on its own still works, and merging becomes possible.",
     "그림 합치기…": "Merge figures…",
     "빈 칸을 눌러 열려 있는 탭을 놓으세요. "
     "여러 칸을 끌어 고르면 묶을 수 있습니다.":
