@@ -780,6 +780,34 @@ class MainWindow(QMainWindow):
     def activate_document(self, index: int) -> None:
         self.docs.setCurrentIndex(index)
 
+    def pick_merge_grid(self) -> tuple[int, int] | None:
+        """몇 행 몇 열로 합칠지 고른다. 취소하면 None."""
+        from .gridpicker import GridPickerPanel
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(_t("그림 합치기"))
+        panel = GridPickerPanel(dlg)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(panel)
+        # 훑다가 누르는 것으로 정해진다 — 확인 버튼을 한 번 더 누를 이유가 없다
+        panel.picked.connect(lambda *_: dlg.accept())
+        return panel.current() if dlg.exec() == QDialog.Accepted else None
+
+    def merge_documents(self) -> None:
+        """격자를 고르고, 칸을 채우고, 병합 결과를 새 탭으로 연다."""
+        from .montagedialog import MontageDialog
+
+        grid = self.pick_merge_grid()
+        if grid is None:
+            return
+        dlg = MontageDialog(self, *grid)
+        if dlg.exec() != QDialog.Accepted or dlg.result_path is None:
+            return
+        try:
+            self._report_issues(self.open_document(dlg.result_path).report)
+        except Exception as exc:
+            self.status(_t("열지 못했습니다: {err}", err=exc))
+
     def open_dialog_file(self) -> None:
         start = str(self.session.script.parent) if self.session.script else ""
         path, _ = QFileDialog.getOpenFileName(
@@ -823,6 +851,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, _t("저장"), "Ctrl+S", self.save)
         self._act(m, _t("스크립트 재실행"), "Ctrl+R", self.reload_script)
+        m.addSeparator()
+        self._act(m, _t("그림 합치기…"), "Ctrl+M", self.merge_documents)
         m.addSeparator()
         self._act(m, _t("내보내기…"), "Ctrl+E", self.export)
 

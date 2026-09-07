@@ -182,3 +182,83 @@ def test_a_new_tab_gets_its_own_view_baseline(win, scripts):
     ax = win.session.fig.axes[0]
     ax.set_xlim(ax.get_xlim()[0], ax.get_xlim()[1] / 2)
     assert win._view_changes(), "보기 변화가 잡히지 않습니다"
+
+
+# --- 조립 화면 ---------------------------------------------------------------
+
+@pytest.fixture
+def funcform(tmp_path):
+    """plot(ax)를 노출하는 패널들 — 모드 B로 합칠 수 있는 형태."""
+    src = ("import matplotlib.pyplot as plt\n\n"
+           "def plot(ax):\n"
+           "    ax.plot([0, 1, 2], [0, 1, 4], 'o-')\n"
+           "    ax.set_title({t!r})\n")
+    out = []
+    for name in ("wide", "a", "b"):
+        p = tmp_path / f"{name}.py"
+        p.write_text(src.format(t=name), encoding="utf-8")
+        out.append(p)
+    return out
+
+
+@pytest.fixture
+def composer(qapp, funcform):
+    from figtune.ui.qt.main import MainWindow
+    from figtune.ui.qt.montagedialog import MontageDialog
+
+    w = MainWindow(funcform[0])
+    for p in funcform[1:]:
+        w.open_document(p)
+    dlg = MontageDialog(w, 2, 2)
+    yield w, dlg, funcform
+    dlg.deleteLater()
+    w.close()
+
+
+def test_saving_is_locked_until_every_cell_is_filled(composer):
+    """빈 칸이 남은 채로 만들면 그 자리가 빈 그림이 나온다."""
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    _w, dlg, scripts = composer
+    save = dlg.buttons.button(QDialogButtonBox.Save)
+    assert not save.isEnabled()
+
+    for i, _s in enumerate(dlg.model.slots):
+        dlg.model.assign(i, str(scripts[i % len(scripts)]) + f"#{i}")
+    dlg._sync_buttons()
+    assert save.isEnabled()
+
+
+def test_merging_shows_one_wide_cell(composer):
+    _w, dlg, _s = composer
+    dlg.grid._region = (0, 0, 0, 1)          # 첫 행 두 칸을 고른 상태
+    dlg._merge()
+    assert (0, 0, 1, 2) in [(s.row, s.col, s.rowspan, s.colspan)
+                            for s in dlg.model.slots]
+    assert len(dlg.model.slots) == 3
+
+
+def test_merge_button_needs_more_than_one_cell(composer):
+    _w, dlg, _s = composer
+    dlg.grid._region = (0, 0, 0, 0)
+    dlg._sync_buttons()
+    assert not dlg.btn_merge.isEnabled()
+
+    dlg.grid._region = (0, 0, 0, 1)
+    dlg._sync_buttons()
+    assert dlg.btn_merge.isEnabled()
+
+
+def test_splitting_a_merged_cell_restores_it(composer):
+    _w, dlg, _s = composer
+    dlg.grid._region = (0, 0, 0, 1)
+    dlg._merge()
+    dlg.grid._region = (0, 0, 0, 0)
+    dlg._split()
+    assert len(dlg.model.slots) == 4
+
+
+def test_the_composer_offers_the_open_tabs(composer):
+    """+를 눌렀을 때 고를 것은 지금 열려 있는 탭들이다."""
+    w, _dlg, scripts = composer
+    assert [d.name for d in w.documents()] == [p.name for p in scripts]

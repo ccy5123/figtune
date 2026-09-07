@@ -102,6 +102,32 @@ MESSAGES = {
     "파일": "File",
     "열기…": "Open…",
     "합칠 격자를 고르세요": "Choose a grid to merge into",
+
+    # --- 그림 합치기 ------------------------------------------------------
+    "그림 합치기": "Merge figures",
+    "그림 합치기…": "Merge figures…",
+    "빈 칸을 눌러 열려 있는 탭을 놓으세요. "
+    "여러 칸을 끌어 고르면 묶을 수 있습니다.":
+        "Click an empty cell to place an open tab. Drag across cells to "
+        "merge them.",
+    "칸 묶기": "Merge cells",
+    "칸 나누기": "Split cell",
+    "칸 비우기": "Empty cell",
+    "저장하고 종료": "Save and close",
+    "빈 칸 {n}개": "{n} empty cells",
+    "열려 있는 탭이 없습니다": "no open tabs",
+    "파일에서…": "From a file…",
+    "병합 스크립트 저장": "Save merge script",
+    "({r},{c})는 격자를 벗어납니다.": "({r},{c}) is outside the grid.",
+    "{ref}는 이미 다른 칸에 있습니다.": "{ref} is already in another cell.",
+    "묶을 범위가 격자를 벗어납니다: ({r},{c}) {rs}x{cs}":
+        "the region to merge falls outside the grid: ({r},{c}) {rs}x{cs}",
+    "이미 묶인 칸에 걸쳐 있습니다. 그 칸을 먼저 나누세요.":
+        "This straddles an already merged cell. Split that cell first.",
+    "채워진 칸이 {n}개입니다. 하나만 남기고 비운 뒤 묶으세요.":
+        "{n} of these cells are filled. Leave one and empty the rest first.",
+    "빈 칸이 {n}개 남았습니다. 모두 채운 뒤 만드세요.":
+        "{n} cells are still empty. Fill them all first.",
     "스크립트 열기": "Open script",
     "탭 닫기": "Close tab",
     "열지 못했습니다: {err}": "could not open it: {err}",
