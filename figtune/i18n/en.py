@@ -101,6 +101,7 @@ MESSAGES = {
     # --- 메뉴 / 탭 / 버튼 ------------------------------------------------
     "파일": "File",
     "열기…": "Open…",
+    "합칠 격자를 고르세요": "Choose a grid to merge into",
     "스크립트 열기": "Open script",
     "탭 닫기": "Close tab",
     "열지 못했습니다: {err}": "could not open it: {err}",
