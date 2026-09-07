@@ -187,8 +187,7 @@ MESSAGES = {
     "없음": "none",
     "적용 실패: {err}": "Could not apply: {err}",
     "내보냄: {path}": "Exported: {path}",
-    "실행 취소: {what}": "Undo: {what}",
-    "다시 실행: {what}": "Redo: {what}",
+    "{what}: {desc}": "{what}: {desc}",
     "저장됨 — {style}, {spec}": "Saved — {style}, {spec}",
     "# 코드 생성 실패: {err}": "# could not generate code: {err}",
     "{path}.{name} override 제거됨 — 재실행하면 원래값으로 돌아갑니다":

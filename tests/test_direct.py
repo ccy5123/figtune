@@ -1577,3 +1577,49 @@ def test_live_fields_stay_enabled(win):
     for name in ("xlabelpad", "ylabelpad", "titlepad", "xlim"):
         _prop, w = win.inspector._rows[name]
         assert w.isEnabled(), name
+
+
+# --- 실행 취소 뒤에도 캔버스가 종이에 맞는다 ------------------------------------
+#
+# 끌기는 종이를 다시 맞추므로 figure 크기가 바뀐다. 되돌리면 크기도 돌아오는데
+# 캔버스 위젯은 고정 크기라 함께 맞추지 않으면 그대로 남는다. 그러면 새 그림이
+# 옛 크기의 위젯에 그려져 잔상이 겹치고, 여러 번 되돌릴수록 심해진다.
+
+def _canvas_matches_paper(win):
+    fig = win.session.fig
+    w_in, h_in = fig.get_size_inches()
+    return (abs(int(w_in * fig.dpi) - win.canvas.width()) <= 1
+            and abs(int(h_in * fig.dpi) - win.canvas.height()) <= 1)
+
+
+def _resize_axes(win, by=220):
+    fig = win.session.fig
+    win.select("ax1")
+    bb = fig.axes[1].get_window_extent()
+    x, y = bb.x1, (bb.y0 + bb.y1) / 2
+    drag(win.canvas, x, y, x + by, y)
+
+
+def test_the_canvas_follows_the_paper_after_undo(win):
+    _resize_axes(win)
+    assert win.session.history.can_undo()
+    win.undo()
+    assert _canvas_matches_paper(win), (
+        f"figure={win.session.fig.get_size_inches()} "
+        f"위젯=({win.canvas.width()}, {win.canvas.height()})")
+
+
+def test_the_canvas_follows_the_paper_after_redo(win):
+    _resize_axes(win)
+    win.undo()
+    win.redo()
+    assert _canvas_matches_paper(win)
+
+
+def test_many_undos_in_a_row_stay_matched(win):
+    """여러 번 연속으로 되돌리면 잔상이 겹쳐 보이던 상황."""
+    for by in (120, -80, 150):
+        _resize_axes(win, by)
+    for _ in range(4):
+        win.undo()
+        assert _canvas_matches_paper(win)

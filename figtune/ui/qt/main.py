@@ -1361,27 +1361,36 @@ class MainWindow(QMainWindow):
         """
         return any(c.prop == EXISTS for c in [cmd, *cmd.extra])
 
+    def _after_history(self, cmd, what: str) -> None:
+        """되돌리거나 다시 실행한 뒤 화면을 맞춘다.
+
+        끌기는 종이를 다시 맞추므로 figure 크기가 바뀐다. 되돌리면 크기도
+        돌아오는데, 캔버스 위젯은 고정 크기라 함께 맞추지 않으면 옛 크기로
+        남는다. 새 그림이 그 위젯에 그려져 잔상이 겹치고, 여러 번 되돌릴수록
+        심해진다.
+        """
+        # 크기를 먼저 맞추고 그린다. 순서가 바뀌면 한 프레임 어긋난 채 보인다.
+        self.canvas_frame.fit()
+        self.canvas.draw_idle()
+        if self._changes_membership(cmd):
+            self.reload_tree()
+            self.select(None)
+        self.refresh_inspector()
+        self.refresh_overlays()
+        self.sync_view_action()
+        if self.right.currentIndex() == 1:
+            self._refresh_code()
+        self.status(_t("{what}: {desc}", what=what, desc=cmd.describe()))
+
     def undo(self):
         cmd = self.session.history.undo()
         if cmd:
-            self.canvas.draw_idle()
-            if self._changes_membership(cmd):
-                self.reload_tree()
-                self.select(None)
-            self.refresh_inspector()
-            self.sync_view_action()
-            self.status(_t("실행 취소: {what}", what=cmd.describe()))
+            self._after_history(cmd, _t("실행 취소"))
 
     def redo(self):
         cmd = self.session.history.redo()
         if cmd:
-            self.canvas.draw_idle()
-            if self._changes_membership(cmd):
-                self.reload_tree()
-                self.select(None)
-            self.refresh_inspector()
-            self.sync_view_action()
-            self.status(_t("다시 실행: {what}", what=cmd.describe()))
+            self._after_history(cmd, _t("다시 실행"))
 
     def save(self):
         hook = False
