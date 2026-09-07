@@ -708,3 +708,87 @@ def test_delete_then_undo_saves_the_same_bytes(session, tmp_path):
     session.history.undo()
     session.save(install_hook=False)
     assert session.style_path.read_text(encoding="utf-8") == before
+
+
+# --- figtune에서 본 그림 == 단독 실행 결과 -------------------------------------
+#
+# 정규형 스크립트는 figure를 __main__ 블록에서만 만든다. figtune은 그 블록을
+# 돌리지 않고 plot(ax)를 직접 불러 그리므로, 그 블록이 하는 일을 재현해야
+# 한다. figsize만 가져오고 tight_layout()을 빠뜨리면 여백이 기본값으로
+# 남아 축 라벨이 종이 밖으로 잘린다.
+
+FUNC_TIGHT = '''import matplotlib.pyplot as plt
+
+def plot(ax):
+    ax.plot([0, 1, 2], [0, 1, 4], 'o-')
+    ax.set_xlabel('Time (h)')
+    ax.set_ylabel('Concentration (ug/g)')
+    ax.set_title('Uptake')
+
+if __name__ == '__main__':
+    fig, ax = plt.subplots(figsize=(5, 3))
+    plot(ax)
+    {layout}
+    plt.show()
+'''
+
+
+def _standalone(path):
+    """스크립트를 그대로 실행했을 때의 figure."""
+    import runpy
+    return runpy.run_path(str(path), run_name="__main__")["fig"]
+
+
+@pytest.mark.parametrize("layout", [
+    "fig.tight_layout()",
+    "plt.tight_layout()",
+])
+def test_the_layout_call_is_reproduced(tmp_path, layout):
+    p = tmp_path / "p.py"
+    p.write_text(FUNC_TIGHT.format(layout=layout), encoding="utf-8")
+
+    s = Session()
+    s.open(p)
+    want = _standalone(p)
+    for side in ("left", "right", "top", "bottom"):
+        assert abs(getattr(s.fig.subplotpars, side)
+                   - getattr(want.subplotpars, side)) < 1e-6, side
+
+
+def test_nothing_is_clipped_on_first_open(tmp_path):
+    """처음 열었을 때 축 라벨이 종이 밖으로 나가면 안 된다."""
+    p = tmp_path / "p.py"
+    p.write_text(FUNC_TIGHT.format(layout="fig.tight_layout()"),
+                 encoding="utf-8")
+    s = Session()
+    s.open(p)
+    s.fig.canvas.draw()
+    r = s.fig.canvas.get_renderer()
+    paper = s.fig.get_window_extent()
+    for art in (s.fig.axes[0].xaxis.label, s.fig.axes[0].yaxis.label,
+                s.fig.axes[0].title):
+        b = art.get_window_extent(r)
+        assert b.y0 >= paper.y0 - 0.5, f"{art.get_text()} 가 아래로 잘렸습니다"
+        assert b.x0 >= paper.x0 - 0.5, f"{art.get_text()} 가 왼쪽으로 잘렸습니다"
+        assert b.y1 <= paper.y1 + 0.5 and b.x1 <= paper.x1 + 0.5
+
+
+def test_a_script_without_a_layout_call_is_left_alone(tmp_path):
+    """부르지도 않은 tight_layout을 우리가 넣으면 안 된다."""
+    p = tmp_path / "p.py"
+    p.write_text(FUNC_TIGHT.format(layout="pass"), encoding="utf-8")
+    s = Session()
+    s.open(p)
+    want = _standalone(p)
+    assert abs(s.fig.subplotpars.bottom - want.subplotpars.bottom) < 1e-6
+
+
+def test_constrained_layout_is_carried_over(tmp_path):
+    """layout 방식이 subplots의 인자로 오는 경우도 있다."""
+    p = tmp_path / "p.py"
+    p.write_text(FUNC_TIGHT.format(layout="pass").replace(
+        "plt.subplots(figsize=(5, 3))",
+        "plt.subplots(figsize=(5, 3), layout='constrained')"), encoding="utf-8")
+    s = Session()
+    s.open(p)
+    assert s.fig.get_layout_engine() is not None

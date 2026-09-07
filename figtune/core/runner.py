@@ -33,14 +33,50 @@ class RunResult:
         return self.figures[0] if self.figures else None
 
 
-def _plot_via_function(ns: dict, src: str):
-    """정규형 스크립트의 plot(ax)를 호출해 figure를 만든다.
+# __main__ 블록의 subplots(...)에서 그대로 가져올 인자들. 여기 있는 것만
+# 가져온다 — sharex처럼 축이 여럿일 때만 뜻이 있는 것은 제외한다.
+_SUBPLOT_KW = ("figsize", "dpi", "facecolor", "edgecolor", "frameon",
+               "layout", "constrained_layout", "tight_layout")
 
-    figsize는 __main__ 블록에 적힌 값을 그대로 쓴다. 그래야 figtune에서 본
-    그림과 단독 실행 결과가 같아진다.
+_LAYOUT_CALLS = ("tight_layout", "set_layout_engine")
+
+
+def _main_block_setup(src: str) -> tuple[dict, list[str]]:
+    """__main__ 블록이 figure에 하는 일을 읽는다.
+
+    (subplots 인자, 부를 레이아웃 메서드들). 리터럴로 적힌 것만 본다 —
+    변수로 만든 값은 여기서 알 수 없다.
     """
     import ast
 
+    kwargs, calls = {}, []
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return kwargs, calls
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = getattr(node.func, "attr", getattr(node.func, "id", None))
+        if name == "subplots":
+            for kw in node.keywords:
+                if kw.arg in _SUBPLOT_KW:
+                    try:
+                        kwargs[kw.arg] = ast.literal_eval(kw.value)
+                    except ValueError:
+                        pass
+        elif name in _LAYOUT_CALLS and name not in calls:
+            calls.append(name)
+    return kwargs, calls
+
+
+def _plot_via_function(ns: dict, src: str):
+    """정규형 스크립트의 plot(ax)를 호출해 figure를 만든다.
+
+    __main__ 블록이 figure에 하는 일을 재현한다. figsize만 가져오고
+    tight_layout()을 빠뜨리면 여백이 기본값으로 남아 축 라벨이 종이 밖으로
+    잘린다 — figtune에서 본 그림과 단독 실행 결과가 달라진다.
+    """
     fn = None
     for name in ("plot", "draw", "make_plot", "plot_panel", "render"):
         cand = ns.get(name)
@@ -50,19 +86,15 @@ def _plot_via_function(ns: dict, src: str):
     if fn is None:
         return None
 
-    figsize = None
-    try:
-        for node in ast.walk(ast.parse(src)):
-            if (isinstance(node, ast.Call)
-                    and getattr(node.func, "attr", None) == "subplots"):
-                for kw in node.keywords:
-                    if kw.arg == "figsize":
-                        figsize = ast.literal_eval(kw.value)
-    except (SyntaxError, ValueError):
-        figsize = None
-
-    fig, ax = plt.subplots(figsize=figsize)
+    kwargs, calls = _main_block_setup(src)
+    fig, ax = plt.subplots(**kwargs)
     fn(ax)
+    for call in calls:
+        # 부르지도 않은 것을 우리가 넣지는 않는다. 스크립트가 부른 것만.
+        try:
+            getattr(fig, call)()
+        except Exception:              # pragma: no cover - 인자가 필요한 경우
+            pass
     return fig
 
 
