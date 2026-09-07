@@ -116,8 +116,10 @@ class Canvas(FigureCanvasQTAgg):
     넘기고 결과를 session에 넣는 것뿐이다.
     """
 
-    def __init__(self, window: "MainWindow"):
-        super().__init__(window.session.fig)
+    def __init__(self, window: "MainWindow", figure=None):
+        # figure를 명시로 받는다. window.session에서 꺼내면 문서를 만드는
+        # 도중(아직 활성 탭이 아닐 때) 엉뚱한 문서의 figure를 집는다.
+        super().__init__(figure if figure is not None else window.session.fig)
         self.win = window
         self._map = None            # hit.HitMap — 다시 그릴 때까지 유효
         self._drag = None           # (core.drag.Drag, 시작 override 값)
@@ -592,24 +594,67 @@ class ViewToolbar(NavToolbar):
         self.view_changed.emit()
 
 
+class Document(QWidget):
+    """열려 있는 스크립트 하나.
+
+    문서마다 따로 가져야 하는 것을 여기 모은다 — 세션(과 그 안의 실행 취소),
+    캔버스, 보기 도구, 선택, 보기 기준선. 창이 이것들을 직접 들고 있으면
+    A 탭에서 고른 것이 B 탭에 적용되는 종류의 사고가 난다.
+
+    트리와 인스펙터는 여기 없다. 지금 보고 있는 문서를 비추는 창의 것이다.
+    """
+
+    def __init__(self, window: "MainWindow", script, python=None, spec_in=None):
+        super().__init__()
+        self.session = Session(python=python)
+        from ...core.spec import Spec
+        self.report = self.session.open(
+            script, spec=Spec.load(spec_in) if spec_in else None)
+
+        # 고른 selector들. 마지막 것이 '기준' — 핸들과 미니 툴바가 그것을
+        # 따르고, 트리와 캔버스가 같은 것을 가리키게 한다.
+        self.selection: list[str] = []
+        self.view_baseline: dict = {}
+        self.dirty = False
+
+        self.canvas = Canvas(window, self.session.fig)
+        self.canvas_frame = CanvasFrame(self.canvas)
+        self.toolbar = ViewToolbar(self.canvas, window)
+        # 확대·이동은 관찰 도구다. spec을 자동으로 건드리지 않고 알리기만
+        # 한다 — 남길지는 사용자가 메뉴에서 정한다.
+        self.toolbar.view_changed.connect(window._view_changed)
+        # 확대는 툴바에서 한다. 그 결과를 남기는 버튼도 같은 자리에 있어야
+        # 찾는다 — 메뉴에만 두면 확대해 놓고 어디서 남기는지 모른다.
+        self.toolbar.addSeparator()
+        self.apply_view_act = self.toolbar.addAction(
+            _t("범위 적용"), window.apply_view_to_spec)
+        self.apply_view_act.setEnabled(False)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.toolbar)
+        lay.addWidget(self.canvas_frame, 1)
+
+    @property
+    def name(self) -> str:
+        return self.session.script.name if self.session.script else "?"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, script: str | Path, python: str | None = None,
                  spec_in=None, spec_out=None, png_out=None, dpi: int = 300):
         super().__init__()
-        # 고른 selector들. 마지막 것이 '기준' — 핸들과 미니 툴바가 그것을
-        # 따르고, 트리와 캔버스가 같은 것을 가리키게 한다.
-        self._selection: list[str] = []
+        self._python = python
         # spec_out/png_out은 PowerPoint 애드인이 결과를 회수하는 경로다.
         self.spec_out, self.png_out, self.export_dpi = spec_out, png_out, dpi
-        self.session = Session(python=python)
-        from ...core.spec import Spec
-        report = self.session.open(
-            script, spec=Spec.load(spec_in) if spec_in else None)
 
-        self.setWindowTitle(f"figtune — {Path(script).name}")
         self.resize(1360, 840)
+        self.docs = QTabWidget()
+        self.docs.setTabsClosable(True)
+        self.docs.setDocumentMode(True)
+        self.docs.tabCloseRequested.connect(self.close_document)
+        self.docs.currentChanged.connect(self._document_changed)
 
-        self.canvas = Canvas(self)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([_t("요소")])
         # 트리는 목록이다 — Shift 범위와 Ctrl 개별이 사는 곳이 여기다.
@@ -642,41 +687,140 @@ class MainWindow(QMainWindow):
         self.btn_text.clicked.connect(self._add_text)
         lv.addWidget(self.btn_text)
 
-        center = QWidget()
-        cv = QVBoxLayout(center)
-        cv.setContentsMargins(0, 0, 0, 0)
-        self.canvas_frame = CanvasFrame(self.canvas)
-        self.toolbar = ViewToolbar(self.canvas, self)
-        # 확대·이동은 관찰 도구다. spec을 자동으로 건드리지 않고 알리기만
-        # 한다 — 남길지는 사용자가 메뉴에서 정한다.
-        self.toolbar.view_changed.connect(self._view_changed)
-        # 확대는 툴바에서 한다. 그 결과를 남기는 버튼도 같은 자리에 있어야
-        # 찾는다 — 메뉴에만 두면 확대해 놓고 어디서 남기는지 모른다.
-        self.toolbar.addSeparator()
-        self.apply_view_act = self.toolbar.addAction(
-            _t("범위 적용"), self.apply_view_to_spec)
-        self.apply_view_act.setEnabled(False)
-        cv.addWidget(self.toolbar)
-        cv.addWidget(self.canvas_frame, 1)
-
         split = QSplitter()
         split.addWidget(left)
-        split.addWidget(center)
+        split.addWidget(self.docs)
         split.addWidget(right)
         split.setSizes([260, 720, 380])
         self.setCentralWidget(split)
 
         self.setStatusBar(QStatusBar())
         self._build_menu()
+        report = self.open_document(script, spec_in=spec_in).report
         self.reload_tree()
         self.capture_view_baseline()
         self.sync_view_action()
         self._report_issues(report)
 
+    # --- 문서(탭) ---------------------------------------------------------
+    #
+    # 창은 '지금 보고 있는 문서'만 안다. session·canvas·toolbar 같은 이름을
+    # 속성으로 넘겨주므로, 문서 하나를 전제하던 코드가 그대로 동작한다.
+
+    @property
+    def doc(self) -> Document | None:
+        return self.docs.currentWidget()
+
+    def documents(self) -> list:
+        return [self.docs.widget(i) for i in range(self.docs.count())]
+
+    def document_count(self) -> int:
+        return self.docs.count()
+
+    def tab_label(self, index: int) -> str:
+        return self.docs.tabText(index)
+
+    @property
+    def session(self):
+        return self.doc.session
+
+    @property
+    def canvas(self):
+        return self.doc.canvas
+
+    @property
+    def canvas_frame(self):
+        return self.doc.canvas_frame
+
+    @property
+    def toolbar(self):
+        return self.doc.toolbar
+
+    @property
+    def apply_view_act(self):
+        return self.doc.apply_view_act
+
+    @property
+    def _selection(self) -> list:
+        return self.doc.selection if self.doc is not None else []
+
+    @_selection.setter
+    def _selection(self, value):
+        if self.doc is not None:
+            self.doc.selection = list(value)
+
+    @property
+    def _view_baseline(self) -> dict:
+        return self.doc.view_baseline if self.doc is not None else {}
+
+    @_view_baseline.setter
+    def _view_baseline(self, value):
+        if self.doc is not None:
+            self.doc.view_baseline = value
+
+    def open_document(self, script, spec_in=None) -> Document:
+        """스크립트를 새 탭으로 연다. 이미 열려 있으면 그 탭으로 간다.
+
+        같은 파일이 두 탭에 있으면 어느 쪽 편집이 저장되는지 알 수 없다.
+        """
+        want = Path(script).resolve()
+        for i, d in enumerate(self.documents()):
+            if d.session.script == want:
+                self.docs.setCurrentIndex(i)
+                return d
+        doc = Document(self, script, python=self._python, spec_in=spec_in)
+        self.docs.addTab(doc, doc.name)
+        self.docs.setCurrentWidget(doc)
+        # 문서마다 자기 기준선이 필요하다. 없으면 그 탭에서는 보기 변화가
+        # 잡히지 않아 '범위 적용'이 영영 켜지지 않는다.
+        self.capture_view_baseline()
+        self.sync_view_action()
+        return doc
+
+    def activate_document(self, index: int) -> None:
+        self.docs.setCurrentIndex(index)
+
+    def open_dialog_file(self) -> None:
+        start = str(self.session.script.parent) if self.session.script else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, _t("스크립트 열기"), start, "Python (*.py)")
+        if not path:
+            return
+        try:
+            self._report_issues(self.open_document(path).report)
+        except Exception as exc:
+            self.status(_t("열지 못했습니다: {err}", err=exc))
+
+    def close_document(self, index: int) -> None:
+        """탭을 닫는다. 마지막 하나는 닫지 않는다.
+
+        빈 창은 아무것도 할 수 없는 상태다 — 들어갈 이유가 없다.
+        """
+        if self.docs.count() <= 1:
+            return
+        doc = self.docs.widget(index)
+        self.docs.removeTab(index)
+        doc.deleteLater()
+
+    def _document_changed(self, _index: int) -> None:
+        """탭이 바뀌었다. 창이 들고 있는 화면을 새 문서로 맞춘다."""
+        if self.doc is None:
+            return
+        self.setWindowTitle(f"figtune — {self.doc.name}")
+        self.reload_tree()
+        self.select_paths(self.doc.selection)
+        self.sync_view_action()
+        if self.right.currentIndex() == 1:
+            self._refresh_code()
+
     # --- 메뉴 ------------------------------------------------------------
 
     def _build_menu(self):
         m = self.menuBar().addMenu(_t("파일"))
+        self._act(m, _t("열기…"), "Ctrl+O", self.open_dialog_file)
+        self._act(m, _t("탭 닫기"), "Ctrl+W",
+                  lambda: self.close_document(self.docs.currentIndex()))
+        m.addSeparator()
         self._act(m, _t("저장"), "Ctrl+S", self.save)
         self._act(m, _t("스크립트 재실행"), "Ctrl+R", self.reload_script)
         m.addSeparator()
@@ -1102,7 +1246,7 @@ class MainWindow(QMainWindow):
         self.status(_t("저장됨 — {style}, {spec}",
                        style=Path(out["style"]).name,
                        spec=Path(out["spec"]).name))
-        self.setWindowTitle(self.windowTitle().rstrip(" *"))
+        self.mark_dirty(False)
         self._refresh_code()
 
     def reload_script(self):
@@ -1153,9 +1297,19 @@ class MainWindow(QMainWindow):
                 bar.setValue(min(bar.maximum(), bar.value() + 6))
                 break
 
-    def mark_dirty(self):
-        if not self.windowTitle().endswith("*"):
-            self.setWindowTitle(self.windowTitle() + " *")
+    def mark_dirty(self, dirty: bool = True):
+        """고칠 것이 남았음을 그 문서의 탭에 표시한다.
+
+        창 제목에만 붙이면 탭이 여럿일 때 어느 문서가 저장이 안 됐는지
+        알 수 없다.
+        """
+        doc = self.doc
+        if doc is None:
+            return
+        doc.dirty = dirty
+        i = self.docs.indexOf(doc)
+        self.docs.setTabText(i, doc.name + (" *" if dirty else ""))
+        self.setWindowTitle(f"figtune — {doc.name}" + (" *" if dirty else ""))
 
     def status(self, msg: str):
         self.statusBar().showMessage(msg, 6000)
