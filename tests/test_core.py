@@ -871,3 +871,102 @@ def test_the_position_survives_save_and_reopen(session, geom, which):
     again = Session(); again.open(session.script)
     b = session.script.with_name("b.png"); again.export(b, dpi=80)
     assert a.read_bytes() == b.read_bytes()
+
+
+# --- 글꼴을 그림 전체에 한 번에 -------------------------------------------------
+#
+# rcParams로는 안 된다. 이미 만들어진 artist에 소급되지 않으므로, 저장하고
+# 다시 열어도 글자는 그대로다. 요소마다 override로 남겨야 한다.
+
+def _pick_font():
+    from figtune.core import typefaces as T
+    return next(f.name for f in T.available()
+                if f.bundled and f.name != "DejaVu Sans")
+
+
+def _families(fig):
+    ax = fig.axes[0]
+    out = {"title": ax.title.get_fontfamily()[0],
+           "xlabel": ax.xaxis.label.get_fontfamily()[0],
+           "tick": ax.get_xticklabels()[0].get_fontfamily()[0]}
+    leg = ax.get_legend()
+    if leg is not None and leg.get_texts():
+        out["legend"] = leg.get_texts()[0].get_fontfamily()[0]
+    return out
+
+
+@pytest.mark.parametrize("path", ["ax0.xtick.major", "ax0.legend"])
+def test_ticks_and_legend_have_a_font_property(session, path):
+    """개별로 짚어도 Properties에 글꼴 칸이 없었다."""
+    assert "fontfamily" in {p.name for p in session.props_for(path)}
+
+
+def test_setting_the_tick_font_takes_effect(session):
+    want = _pick_font()
+    session.set_prop("ax0.xtick.major", "fontfamily", want)
+    session.fig.canvas.draw()
+    assert session.fig.axes[0].get_xticklabels()[0].get_fontfamily()[0] == want
+
+
+def test_the_tick_font_survives_a_locator_change(session):
+    """눈금은 다시 만들어진다. 그때 글꼴이 날아가면 조용히 되돌아간다."""
+    want = _pick_font()
+    session.set_prop("ax0.xtick.major", "fontfamily", want)
+    session.set_prop("ax0.xtick.major", "locator",
+                     {"kind": "multiple", "base": 12.0})
+    session.fig.canvas.draw()
+    assert session.fig.axes[0].get_xticklabels()[0].get_fontfamily()[0] == want
+
+
+def test_setting_the_legend_font_takes_effect(session):
+    want = _pick_font()
+    session.set_prop("ax0.legend", "fontfamily", want)
+    session.fig.canvas.draw()
+    leg = session.fig.axes[0].get_legend()
+    assert leg.get_texts()[0].get_fontfamily()[0] == want
+
+
+def test_the_legend_font_does_not_drop_its_other_settings(session):
+    """범례는 새로 만들어진다 — 글꼴을 넣다가 직전 설정을 잃으면 안 된다."""
+    want = _pick_font()
+    session.set_prop("ax0.legend", "frameon", False)
+    session.set_prop("ax0.legend", "fontfamily", want)
+    leg = session.fig.axes[0].get_legend()
+    assert leg.get_frame_on() is False
+    assert leg.get_texts()[0].get_fontfamily()[0] == want
+
+
+# --- 한 번에 바꾸기 ------------------------------------------------------------
+
+def test_apply_font_touches_every_text(session):
+    want = _pick_font()
+    session.apply_font_everywhere(want)
+    session.fig.canvas.draw()
+    got = _families(session.fig)
+    assert set(got.values()) == {want}, got
+
+
+def test_apply_font_is_one_undo_step(session):
+    steps = len(session.history)
+    session.apply_font_everywhere(_pick_font())
+    assert len(session.history) - steps == 1
+
+    before = _families(session.fig)
+    session.history.undo()
+    session.fig.canvas.draw()
+    assert _families(session.fig) != before
+
+
+def test_apply_font_survives_save_and_reopen(session):
+    want = _pick_font()
+    session.apply_font_everywhere(want)
+    session.save(install_hook=False)
+    again = Session()
+    again.open(session.script)
+    again.fig.canvas.draw()
+    assert set(_families(again.fig).values()) == {want}
+
+
+def test_apply_font_reports_what_it_changed(session):
+    n = session.apply_font_everywhere(_pick_font())
+    assert n >= 4, n

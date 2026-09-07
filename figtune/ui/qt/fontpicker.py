@@ -217,3 +217,21 @@ class FontDialog(QDialog):
         register_with_qt()
         self.refreshed = True
         self.accept()
+
+
+def pick_family(parent, title: str) -> str | None:
+    """글꼴 하나를 고르게 한다. 취소하면 None.
+
+    목록은 matplotlib이 아는 것만 보여준다. Qt 목록을 그대로 쓰면 고르고
+    나서 조용히 대체 글꼴로 그려진다 — 무엇을 골랐는지가 화면과 어긋난다.
+    """
+    from PySide6.QtWidgets import QInputDialog
+
+    names = [f.name for f in T.available()]
+    if not names:
+        return None
+    current = T.default_family() or names[0]
+    start = names.index(current) if current in names else 0
+    name, ok = QInputDialog.getItem(parent, title, _t("글꼴:"), names,
+                                    start, False)
+    return name if ok and name else None

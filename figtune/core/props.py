@@ -93,6 +93,7 @@ REGISTRY: dict[str, list[Prop]] = {
         P("bbox_to_anchor", "tuple2", "앵커"),
         P("frameon", "bool", "테두리"),
         P("fontsize", "float", "글자 크기", lo=1, hi=40, step=0.5),
+        P("fontfamily", "font", "글꼴"),
         P("title", "str", "범례 제목"),
         P("title_fontsize", "float", "제목 크기", lo=1, hi=40, step=0.5),
     ],
@@ -179,6 +180,7 @@ REGISTRY: dict[str, list[Prop]] = {
         P("color", "color", "눈금색"),
         P("labelcolor", "color", "라벨색"),
         P("labelrotation", "float", "라벨 회전", lo=-180, hi=180, step=5),
+        P("fontfamily", "font", "글꼴"),
         P("bottom", "bool", "아래 표시"),
         P("top", "bool", "위 표시"),
         P("left", "bool", "왼쪽 표시"),
@@ -199,6 +201,7 @@ REGISTRY: dict[str, list[Prop]] = {
         P("bbox_to_anchor", "tuple2", "앵커"),
         P("frameon", "bool", "테두리"),
         P("fontsize", "float", "글자 크기", lo=1, hi=40, step=0.5),
+        P("fontfamily", "font", "글꼴"),
         P("ncols", "int", "열 수", lo=1, hi=8, step=1),
         P("title", "str", "범례 제목"),
         P("labelspacing", "float", "항목 간격", lo=0, hi=3, step=0.05),
@@ -765,6 +768,9 @@ def _tick_get(ax, axis, which, name):
     try:
         if name == "labelsize":
             return float(t.label1.get_fontsize())
+        if name == "fontfamily":
+            fam = t.label1.get_fontfamily()
+            return fam[0] if fam else None
         if name == "length":
             return float(t.tick1line.get_markersize())
         if name == "width":
@@ -784,6 +790,10 @@ def _tick_get(ax, axis, which, name):
     return None
 
 
+# figtune의 이름 -> matplotlib tick_params의 이름
+_TICK_KW = {"fontfamily": "labelfontfamily"}
+
+
 def _tick_set(ax, axis, which, name, value):
     if name == "locator":
         a = ax.xaxis if axis == "x" else ax.yaxis
@@ -791,7 +801,10 @@ def _tick_set(ax, axis, which, name, value):
         if loc is not None:
             (a.set_major_locator if which == "major" else a.set_minor_locator)(loc)
         return
-    ax.tick_params(axis=axis, which=which, **{name: value})
+    # matplotlib은 눈금 라벨 글꼴을 labelfontfamily로 받는다. 라벨마다
+    # set_fontfamily를 부르는 방법도 있지만, 눈금이 다시 만들어질 때
+    # 날아간다 — tick_params로 넣은 것은 살아남는다.
+    ax.tick_params(axis=axis, which=which, **{_TICK_KW.get(name, name): value})
 
 
 def _tick_code(var, axis, which, name, value):
@@ -799,7 +812,8 @@ def _tick_code(var, axis, which, name, value):
         code = locator_code(value)
         setter = "set_major_locator" if which == "major" else "set_minor_locator"
         return f"{var}.{axis}axis.{setter}({code})"
-    return f"{var}.tick_params(axis={axis!r}, which={which!r}, {name}={value!r})"
+    key = _TICK_KW.get(name, name)
+    return f"{var}.tick_params(axis={axis!r}, which={which!r}, {key}={value!r})"
 
 
 # --- grid -----------------------------------------------------------------
@@ -843,7 +857,7 @@ def _grid_code(var, axis, name, value):
 
 # --- legend ---------------------------------------------------------------
 
-_LEGEND_KW = ("loc", "bbox_to_anchor", "borderaxespad",
+_LEGEND_KW = ("loc", "bbox_to_anchor", "borderaxespad", "fontfamily",
               "frameon", "fontsize", "ncols",
               "title", "labelspacing", "labels")
 
@@ -911,6 +925,10 @@ def apply_legend(ax, over: dict) -> None:
 
     kw = {k: v for k, v in over.items()
           if k in _LEGEND_KW and k != "labels" and v is not None}
+    if "fontfamily" in kw:
+        # 범례는 글꼴을 prop(FontProperties)으로 받는다. fontfamily= 로는
+        # 안 먹는다 — 조용히 무시되어 값만 spec에 남는다.
+        kw["prop"] = {"family": kw.pop("fontfamily")}
     if "bbox_to_anchor" in kw:
         kw["bbox_to_anchor"] = tuple(kw["bbox_to_anchor"])
         # 앵커를 주어도 matplotlib은 borderaxespad(기본 0.5 글꼴 단위, 약

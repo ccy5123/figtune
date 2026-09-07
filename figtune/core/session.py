@@ -239,6 +239,33 @@ class Session:
     _CLEARED_BY = {("legend", "loc"): "bbox_to_anchor",
                    ("figlegend", "loc"): "bbox_to_anchor"}
 
+    def text_paths(self) -> list[str]:
+        """글자를 가진 대상 전부. 트리 순서 그대로.
+
+        rcParams로는 글꼴을 바꿀 수 없다. 이미 만들어진 artist에 소급되지
+        않아, 저장하고 다시 열어도 글자는 그대로다. 그래서 요소마다 override로
+        남긴다 — 코드에도 그렇게 나가고, 재실행해도 같은 그림이 나온다.
+        """
+        out = []
+        for node in self.tree.walk() if self.tree else []:
+            try:
+                kind = sel.parse(node.path).kind
+            except sel.SelectorError:
+                continue
+            if any(p.name == "fontfamily" for p in P.props_for(kind)):
+                out.append(node.path)
+        return out
+
+    def apply_font_everywhere(self, family: str) -> int:
+        """그림 안의 모든 글자를 한 글꼴로. 바꾼 개수를 돌려준다.
+
+        몇 개를 바꿨든 실행 취소는 한 칸이다 — 한 번의 조작이므로.
+        """
+        paths = self.text_paths()
+        if paths:
+            self.set_props(paths, "fontfamily", family)
+        return len(paths)
+
     def inactive_props(self, path: str) -> dict:
         """지금 상태에서 효과가 없는 속성 -> 그 이유.
 

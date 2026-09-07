@@ -1623,3 +1623,38 @@ def test_many_undos_in_a_row_stay_matched(win):
     for _ in range(4):
         win.undo()
         assert _canvas_matches_paper(win)
+
+
+# --- 그림 전체 글꼴 바꾸기 -----------------------------------------------------
+
+def test_the_font_button_changes_everything(win, monkeypatch):
+    from figtune.core import typefaces as T
+    from figtune.ui.qt import fontpicker
+
+    want = next(f.name for f in T.available()
+                if f.bundled and f.name != "DejaVu Sans")
+    monkeypatch.setattr(fontpicker, "pick_family",
+                        lambda *a, **k: want)
+    win.change_font_everywhere()
+    win.session.fig.canvas.draw()
+
+    ax = win.session.fig.axes[0]
+    for art in (ax.title, ax.xaxis.label, ax.get_xticklabels()[0],
+                ax.get_legend().get_texts()[0]):
+        assert art.get_fontfamily()[0] == want
+
+
+def test_cancelling_the_font_picker_changes_nothing(win, monkeypatch):
+    from figtune.ui.qt import fontpicker
+
+    monkeypatch.setattr(fontpicker, "pick_family", lambda *a, **k: None)
+    steps = len(win.session.history)
+    win.change_font_everywhere()
+    assert len(win.session.history) == steps
+
+
+def test_ticks_and_legend_now_show_a_font_field(win):
+    """개별로 짚어도 Properties에 글꼴 칸이 없었다."""
+    for path in ("ax0.xtick.major", "ax0.legend"):
+        win.select(path)
+        assert "fontfamily" in win.inspector._rows, path

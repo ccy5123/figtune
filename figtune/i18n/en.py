@@ -167,6 +167,11 @@ MESSAGES = {
     "코드": "Code",
     "패널 라벨 (a)(b)(c) 일괄 삽입": "Insert (a)(b)(c) panel labels",
     "선택한 축에 텍스트 추가": "Add text to selected axes",
+    "그림 전체 글꼴 바꾸기": "Change the font everywhere",
+    "그림 전체 글꼴 바꾸기…": "Change the font everywhere…",
+    "글꼴:": "Font:",
+    "{n}개 대상의 글꼴을 {name}(으)로 바꿨습니다":
+        "Changed the font of {n} items to {name}",
 
     # --- 대화상자 / 상태줄 -----------------------------------------------
     "캔버스나 트리에서 요소를 선택하세요.":

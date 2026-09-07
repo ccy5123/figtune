@@ -86,6 +86,10 @@ def _legend(ax, labels=None, **kw):
     get_legend_handles_labels() comes back empty. Calling ax.legend() as-is
     would drop the markers, so the handles are recovered from the old legend.
     """
+    if "fontfamily" in kw:
+        # A legend takes its font as prop(FontProperties); fontfamily= is
+        # silently ignored.
+        kw["prop"] = {{"family": kw.pop("fontfamily")}}
     handles, found = ax.get_legend_handles_labels()
     if not handles:
         leg = ax.get_legend()

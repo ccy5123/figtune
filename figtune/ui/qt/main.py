@@ -781,6 +781,9 @@ class MainWindow(QMainWindow):
         self.btn_text = QPushButton(_t("선택한 축에 텍스트 추가"))
         self.btn_text.clicked.connect(self._add_text)
         lv.addWidget(self.btn_text)
+        self.btn_font = QPushButton(_t("그림 전체 글꼴 바꾸기"))
+        self.btn_font.clicked.connect(self.change_font_everywhere)
+        lv.addWidget(self.btn_font)
 
         split = QSplitter()
         split.addWidget(left)
@@ -955,6 +958,9 @@ class MainWindow(QMainWindow):
         self._act(e, _t("실행 취소"), QKeySequence.Undo, self.undo)
         self._act(e, _t("다시 실행"), QKeySequence.Redo, self.redo)
         e.addSeparator()
+        self._act(e, _t("그림 전체 글꼴 바꾸기…"), "Ctrl+Shift+F",
+                  self.change_font_everywhere)
+        e.addSeparator()
         self.delete_act = self._act(e, _t("삭제"), QKeySequence.Delete,
                                     self.delete_selection)
         self.delete_act.setEnabled(False)
@@ -1080,6 +1086,23 @@ class MainWindow(QMainWindow):
         act = getattr(self, "delete_act", None)
         if act is not None:
             act.setEnabled(bool(self.deletable()))
+
+    def change_font_everywhere(self) -> None:
+        """그림 안의 모든 글자를 한 글꼴로 바꾼다.
+
+        rcParams로는 안 된다 — 이미 만들어진 artist에 소급되지 않아, 저장하고
+        다시 열어도 글자는 그대로다. 요소마다 override로 남긴다.
+        """
+        from .fontpicker import pick_family
+
+        name = pick_family(self, _t("그림 전체 글꼴 바꾸기"))
+        if not name:
+            return
+        n = self.session.apply_font_everywhere(name)
+        self.canvas.draw_idle()
+        self.after_edit()
+        self.status(_t("{n}개 대상의 글꼴을 {name}(으)로 바꿨습니다",
+                       n=n, name=name))
 
     def delete_selection(self) -> None:
         paths = self.deletable()
