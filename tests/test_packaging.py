@@ -88,22 +88,17 @@ def test_the_one_line_description_is_english():
     assert not HANGUL.search(desc), f"한국어가 남아 있습니다: {desc}"
 
 
-# 영어 README에 한국어가 남아도 되는 자리. 둘 다 한글이 **화면에 무엇이
-# 뜨는지 보여주는 예시**라, 영어로 바꾸면 그 문장이 설명하려던 것이 사라진다.
-# 산문에는 한 글자도 없어야 한다 — 여기에 뭔가 추가하기 전에, 그것이 정말
-# 번역할 수 없는 예시인지 먼저 확인할 것.
-ALLOWED_HANGUL = (
-    "한국어 / English",       # 언어 메뉴가 각 언어를 제 언어로 적는다는 설명
-    "AaBbCc 123 가나다",      # 글꼴 드롭다운의 미리보기 표본
-)
-
-
 def test_the_english_readme_is_english():
-    """번역이 반쯤 되다 만 채로 PyPI에 올라가는 것을 막는다."""
+    """PyPI에 올라가는 문서에는 한글이 한 글자도 없다.
+
+    예외를 두지 않는다. 화면에 무엇이 뜨는지 보여주려고 한글 표본을 넣고
+    싶어지는 자리가 몇 군데 있지만, 예외를 하나 허용하면 그 목록이 자라고
+    결국 번역이 반쯤 되다 만 문서가 PyPI에 올라간다. 표본이 필요하면 그
+    글자를 그대로 쓰지 말고 무엇인지 말로 적는다.
+    """
     lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     leaks = [f"{i}행: {ln.strip()}" for i, ln in enumerate(lines, 1)
-             if HANGUL.search(ln)
-             and not any(ok in ln for ok in ALLOWED_HANGUL)]
+             if HANGUL.search(ln)]
     assert not leaks, "영어 README에 한국어가 남아 있습니다:\n  " + "\n  ".join(leaks)
 
 

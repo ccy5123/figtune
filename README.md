@@ -10,9 +10,10 @@ pip install "figtune[gui]"
 figtune plot_fig3.py
 ```
 
-The `[gui]` extra pulls in Qt, which is 650MB. If you only need the
-command line — `render`, `refresh`, `merge`, `normalize` — plain
-`pip install figtune` is a quarter of the size and enough.
+That second line opens a window, so it needs the `[gui]` extra, which is Qt.
+Plain `pip install figtune` is 650MB smaller but leaves you with only the
+`render`, `refresh`, `merge`, and `normalize` subcommands — useful on a build
+server, not on a desktop.
 
 ---
 
@@ -561,9 +562,9 @@ FIGTUNE_LANG=en figtune plot_fig3.py
 ```
 
 The GUI switches from the `Language` menu with no restart, and the choice is
-kept in `~/.config/figtune/config.json`. Language names in the menu are always
-written in that language (한국어 / English) — it has to be the way out when you
-are stuck in a language you cannot read.
+kept in `~/.config/figtune/config.json`. Each language is named in its own
+script in that menu, never translated — it has to be the way out when you are
+stuck in a language you cannot read.
 
 ### Without fonts it falls back to English
 
@@ -600,7 +601,7 @@ The font list is **matplotlib's**. matplotlib is what draws the text in the
 figure, so showing Qt's list would mean your choice is quietly substituted.
 
 The dropdown draws each font **in itself**. Fonts that can render Korean carry
-an `AaBbCc 123 가나다` sample, so you need not guess from the name. The `+`
+a sample with Korean glyphs in it, so you need not guess from the name. The `+`
 button shows recommended fonts you do not have yet, along with **install
 commands** — figtune does not download fonts. A tool that quietly reaches out to
 the network behaves unpredictably on an intranet or offline, and brings license
