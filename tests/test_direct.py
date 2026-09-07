@@ -89,6 +89,17 @@ def drag(c, x0, y0, x1, y1):
     release(c, x1, y1)
 
 
+def sel_usertext(ax_i, tid):
+    from figtune.core import selector as sel
+    return sel.usertext(ax_i, tid)
+
+
+def _tree_paths(win):
+    from PySide6.QtCore import Qt
+    return {it.data(0, Qt.UserRole) for it in
+            win.tree.findItems("", Qt.MatchContains | Qt.MatchRecursive, 0)}
+
+
 def center(win, artist):
     bb = artist.get_window_extent(win.canvas.get_renderer())
     return (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2
@@ -1297,3 +1308,89 @@ def test_mixed_kinds_move_together(win):
     drag(win.canvas, x, y, x + 40, y)
     assert win.session.spec.of("ax0").get("position") is not None
     assert win.session.spec.of("ax0.title").get("position") is not None
+
+
+# --- 삭제 --------------------------------------------------------------------
+
+def test_delete_action_is_off_without_a_selection(win):
+    win.select(None)
+    assert not win.delete_act.isEnabled()
+
+
+def test_delete_action_is_off_for_script_owned_things(win):
+    """원본이 만든 것은 지워도 재실행하면 되살아난다. 버튼이 살아 있으면
+    지워지는 줄 알고 눌렀다가 돌아오는 것을 보게 된다."""
+    for path in ("ax0.title", "ax0.line0", "ax0"):
+        win.select(path)
+        assert not win.delete_act.isEnabled(), path
+
+
+def test_delete_action_wakes_for_figtune_owned_text(win):
+    tid = win.session.add_text(0, "mine")
+    win.reload_tree()
+    win.select(sel_usertext(0, tid))
+    assert win.delete_act.isEnabled()
+
+
+def test_delete_removes_it_and_refreshes_the_tree(win):
+    tid = win.session.add_text(0, "mine")
+    win.reload_tree()
+    path = sel_usertext(0, tid)
+    win.select(path)
+    win.delete_selection()
+
+    assert win.session.spec.text_by_id(tid) is None
+    assert path not in _tree_paths(win)
+    assert win.selection() == []
+
+
+def test_the_delete_key_deletes(win):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    tid = win.session.add_text(0, "mine")
+    win.reload_tree()
+    win.select(sel_usertext(0, tid))
+    win.canvas.keyPressEvent(
+        QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+    assert win.session.spec.text_by_id(tid) is None
+
+
+def test_the_delete_key_leaves_script_owned_things_alone(win):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    ax = win.session.fig.axes[0]
+    before = ax.title.get_text()
+    win.select("ax0.title")
+    win.canvas.keyPressEvent(
+        QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+    assert ax.title.get_text() == before
+
+
+def test_deleting_several_is_one_undo_step(win):
+    ids = [win.session.add_text(0, f"t{i}") for i in range(3)]
+    win.reload_tree()
+    win.select_paths([sel_usertext(0, t) for t in ids])
+    steps = len(win.session.history)
+
+    win.delete_selection()
+    assert len(win.session.history) - steps == 1
+    win.undo()
+    assert all(win.session.spec.text_by_id(t) is not None for t in ids)
+
+
+def test_deleting_while_editing_text_does_not_fire(win):
+    """캐럿이 떠 있으면 Delete는 글자 지우기다 — 요소를 지우면 안 된다."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    tid = win.session.add_text(0, "mine")
+    win.reload_tree()
+    win.select(sel_usertext(0, tid))
+    art = next(t for t in win.session.fig.axes[0].texts
+               if getattr(t, "_figtune_id", None) == tid)
+    win.canvas.editor.open_at(sel_usertext(0, tid), art, click_x=0)
+    win.canvas.keyPressEvent(
+        QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+    assert win.session.spec.text_by_id(tid) is not None

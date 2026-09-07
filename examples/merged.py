@@ -15,7 +15,17 @@ may span several grid cells.
 import matplotlib.pyplot as plt
 
 # (row, col, rowspan, colspan) — same order as the panel functions below
-CELLS = [(0, 0, 1, 1), (0, 1, 1, 1), (1, 0, 1, 1), (1, 1, 1, 1)]
+CELLS = [(0, 0, 1, 1), (0, 1, 1, 1), (1, 0, 1, 2)]
+
+# Each panel's projection, or None for an ordinary 2D axes. An axes' class is
+# fixed when it is created (Axes3D, PolarAxes, …), so a 3D panel needs the
+# right kind of axes from the start — it cannot be converted afterwards.
+PROJECTIONS = [None, None, None]
+
+# A panel that already draws several axes keeps its own grid: its region is
+# subdivided into (rows, cols) and it receives that list of axes. (1, 1) means
+# an ordinary single-axes panel.
+INNER = [(1, 1), (1, 1), (1, 2)]
 
 PANEL_LABELS = ['(a)', '(b)', '(c)', '(d)']
 
@@ -77,65 +87,68 @@ def _panel_1(ax):
     plot(ax)
 
 
-def _panel_2(ax):
-    """예제 패널: 막대. patches가 그룹으로 묶여 트리에 나오는 경우다."""
-    import numpy as np
-    import matplotlib.pyplot as plt
+def _panel_2(axs):
+    def _draw(axs):
+        fig = axs[0].figure
+        axes = axs
+        """예제: 멀티패널 figure. figtune은 이 파일을 절대 수정하지 않는다."""
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
 
-    TREATMENTS = ("control", "low", "mid", "high")
-    MEANS = (1.0, 1.4, 2.2, 3.1)
-    ERRORS = (0.12, 0.15, 0.21, 0.28)
-
-
-    def plot(ax):
-        x = np.arange(len(TREATMENTS))
-        ax.bar(x, MEANS, yerr=ERRORS, capsize=3)
-        ax.set_xticks(x)
-        ax.set_xticklabels(TREATMENTS)
-        ax.set_ylabel("Body burden")
-        ax.set_title("By treatment")
-
-    plot(ax)
+        rng = np.random.default_rng(42)
+        t = np.linspace(0, 48, 24)
+        obs = 3.5 * (1 - np.exp(-0.09 * t)) + rng.normal(0, 0.12, t.size)
+        pred = 3.5 * (1 - np.exp(-0.09 * t))
 
 
-def _panel_3(ax):
-    """예제 패널: 배출 곡선. y축 라벨이 일부러 짧다.
+        axes[0].plot(t, obs, "o", label="Observed", markersize=4)
+        axes[0].plot(t, pred, "-", label="DEB-TK")
+        axes[0].set_xlabel("Time (h)")
+        axes[0].set_ylabel("Concentration")
+        axes[0].set_title("Uptake")
+        axes[0].legend()
 
-    패널마다 y라벨 길이가 다르면 단순 타일링으로는 그림틀이 어긋난다.
-    figtune의 모드 A는 axes 상자를 기준으로 맞추고, 모드 B는 하나의 격자에
-    그리므로 둘 다 이 문제를 피한다.
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
+        groups = np.repeat(["low", "mid", "high"], 30)
+        vals = np.concatenate([rng.normal(m, 0.4, 30) for m in (1.0, 1.8, 2.9)])
+        sns.scatterplot(x=rng.uniform(0, 1, 90), y=vals, hue=groups, ax=axes[1])
+        axes[1].set_xlabel("Exposure")
+        axes[1].set_ylabel("Response")
+        axes[1].set_title("Dose response")
 
-    RNG = np.random.default_rng(11)
+        fig.tight_layout()
 
-
-    def plot(ax):
-        t = np.linspace(0, 72, 30)
-        for k, label in ((0.05, "slow"), (0.12, "fast")):
-            y = 3.5 * np.exp(-k * t) + RNG.normal(0, 0.05, t.size)
-            ax.plot(t, y, "o-", markersize=3, label=label)
-        ax.set_xlabel("Time (h)")
-        ax.set_ylabel("C")
-        ax.set_title("Elimination")
-        ax.legend(frameon=False)
-
-    plot(ax)
+    _draw(axs)
 
 
-PANELS = [_panel_0, _panel_1, _panel_2, _panel_3]
+PANELS = [_panel_0, _panel_1, _panel_2]
 
 fig = plt.figure(figsize=(8.0, 6.0))
 _gs = fig.add_gridspec(2, 2)
-_axes = [fig.add_subplot(_gs[_r:_r + _rs, _c:_c + _cs])
-         for _r, _c, _rs, _cs in CELLS]
 
-for _draw, _ax in zip(PANELS, _axes):
-    _draw(_ax)
+_axes = []          # every axes, in reading order — the labels follow this
+_targets = []       # what each panel is handed: one axes, or a list of them
+for (_r, _c, _rs, _cs), _p, (_ir, _ic) in zip(CELLS, PROJECTIONS, INNER):
+    _spec = _gs[_r:_r + _rs, _c:_c + _cs]
+    _kw = {} if _p is None else {"projection": _p}
+    if (_ir, _ic) == (1, 1):
+        _a = fig.add_subplot(_spec, **_kw)
+        _axes.append(_a)
+        _targets.append(_a)
+    else:
+        _sub = _spec.subgridspec(_ir, _ic)
+        _group = [fig.add_subplot(_sub[_i, _j], **_kw)
+                  for _i in range(_ir) for _j in range(_ic)]
+        _axes.extend(_group)
+        _targets.append(_group)
+
+for _draw, _t in zip(PANELS, _targets):
+    _draw(_t)
 
 for _ax, _label in zip(_axes, PANEL_LABELS):
-    _ax.text(-0.15, 1.02, _label, transform=_ax.transAxes,
-             fontweight="bold", fontsize=11, va="bottom", ha="left")
+    # Axes3D.text takes (x, y, z, s); text2D is the 2D-in-axes-coords one.
+    _put = getattr(_ax, "text2D", None) or _ax.text
+    _put(-0.15, 1.02, _label, transform=_ax.transAxes,
+         fontweight="bold", fontsize=11, va="bottom", ha="left")
 
 fig.tight_layout()

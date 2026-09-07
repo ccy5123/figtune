@@ -351,6 +351,14 @@ class Canvas(FigureCanvasQTAgg):
             self.win.clear_selection()
             event.accept()
             return
+        # 캐럿이 떠 있으면 Delete는 글자 지우기다. 편집기가 포커스를 쥐고
+        # 먼저 받으므로 보통 여기까지 오지 않지만, 경로가 갈릴 수 있어
+        # 여기서도 막는다 — 글자 하나 지우려다 요소가 사라지면 안 된다.
+        if event.key() == Qt.Key_Delete and not self.editor.active \
+                and self.win.deletable():
+            self.win.delete_selection()
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def paintEvent(self, event):
@@ -860,6 +868,10 @@ class MainWindow(QMainWindow):
         self._act(e, _t("실행 취소"), QKeySequence.Undo, self.undo)
         self._act(e, _t("다시 실행"), QKeySequence.Redo, self.redo)
         e.addSeparator()
+        self.delete_act = self._act(e, _t("삭제"), QKeySequence.Delete,
+                                    self.delete_selection)
+        self.delete_act.setEnabled(False)
+        e.addSeparator()
         self._act(e, _t("현재 보기를 축 범위로"), "Ctrl+Shift+L",
                   self.apply_view_to_spec)
 
@@ -952,6 +964,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_highlight(
             picked, getattr(self.canvas, "_target", None)
             if not from_tree else None)
+        self.sync_delete_action()
         if not picked:
             self.inspector.show([], {}, set())
             self.canvas.bar.hide_bar()
@@ -962,6 +975,33 @@ class MainWindow(QMainWindow):
                     else _t("{n}개 선택됨", n=len(picked)))
         if not from_tree:
             self._sync_tree_selection(picked)
+
+    def deletable(self) -> list[str]:
+        """고른 것 중 지울 수 있는 것들.
+
+        원본 스크립트가 만든 것은 지워도 재실행하면 되살아난다. 지워지는
+        것처럼 보였다가 돌아오면 도구를 믿을 수 없게 되므로, 아예 내주지
+        않는다 — 감추려면 visible=False를 쓰고 그건 코드로도 남는다.
+        """
+        if self.doc is None:
+            return []
+        return [p for p in self.selection() if self.session.can_delete(p)]
+
+    def sync_delete_action(self) -> None:
+        act = getattr(self, "delete_act", None)
+        if act is not None:
+            act.setEnabled(bool(self.deletable()))
+
+    def delete_selection(self) -> None:
+        paths = self.deletable()
+        if not paths:
+            return
+        n = self.session.delete_paths(paths)
+        self.canvas.draw_idle()
+        self.reload_tree()
+        self.select(None)
+        self.mark_dirty()
+        self.status(_t("{n}개 삭제됨", n=n))
 
     def _shared_values(self, paths):
         """고른 것들의 (공통값, 값이 갈리는 속성, override된 속성).

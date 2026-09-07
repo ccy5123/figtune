@@ -152,6 +152,8 @@ MESSAGES = {
     "편집": "Edit",
     "실행 취소": "Undo",
     "다시 실행": "Redo",
+    "삭제": "Delete",
+    "{n}개 삭제됨": "{n} deleted",
     "언어": "Language",
     "시스템 따름": "Follow system",
     "속성": "Properties",

@@ -380,6 +380,30 @@ class Session:
         """
         return sel.parse(path).kind == "usertext"
 
+    def delete_paths(self, paths) -> int:
+        """지울 수 있는 것들을 지운다. 지운 개수를 돌려준다.
+
+        지울 수 없는 것이 섞여 있어도 나머지는 지운다 — 여럿을 고른 채
+        누른 것이므로, 하나 때문에 전부 막으면 다시 골라야 한다.
+
+        몇 개를 지웠든 실행 취소는 한 칸이다.
+        """
+        cmds = []
+        for path in paths:
+            if not self.can_delete(path):
+                continue
+            s = sel.parse(path)
+            t = self.spec.text_by_id(s.name)
+            if t is None:
+                continue
+            cmds.append(Command(path, EXISTS, asdict(t), None))
+            self.delete_text(s.name, record=False)
+        if cmds:
+            head = cmds[0]
+            self.history.push(Command(head.path, head.prop, head.old, head.new,
+                                      extra=cmds[1:]))
+        return len(cmds)
+
     def delete_text(self, tid: str, record: bool = True) -> None:
         t = self.spec.text_by_id(tid)
         if t is None:

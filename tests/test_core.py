@@ -635,3 +635,76 @@ def test_set_props_records_each_targets_own_old_value(session):
     session.history.undo()
     assert session.spec.get("ax0.line0", "linewidth") == 5.0
     assert session.spec.get("ax0.line1", "linewidth") is None
+
+
+# --- 삭제 --------------------------------------------------------------------
+
+def test_only_figtune_owned_things_can_be_deleted(session):
+    """원본 스크립트가 만든 것은 지워도 재실행하면 되살아난다.
+
+    지워지는 것처럼 보였다가 돌아오면 사용자는 도구를 믿을 수 없게 된다.
+    감추려면 visible=False를 쓰고, 그건 코드로도 남는다.
+    """
+    tid = session.add_text(0, "mine")
+    assert session.can_delete(sel.usertext(0, tid))
+    for path in ("ax0.title", "ax0.line0", "ax0", "fig", "ax0.legend"):
+        assert not session.can_delete(path), path
+
+
+def test_delete_paths_removes_every_deletable_one(session):
+    ids = [session.add_text(0, f"t{i}") for i in range(3)]
+    paths = [sel.usertext(0, t) for t in ids]
+    assert session.delete_paths(paths) == 3
+    assert all(session.spec.text_by_id(t) is None for t in ids)
+
+
+def test_delete_paths_skips_what_it_may_not_touch(session):
+    """지울 수 없는 것이 섞여 있어도 나머지는 지운다."""
+    tid = session.add_text(0, "mine")
+    n = session.delete_paths([sel.usertext(0, tid), "ax0.title", "ax0.line0"])
+    assert n == 1
+    assert session.fig.axes[0].title.get_text() != ""
+
+
+def test_deleting_several_is_one_undo_step(session):
+    """셋을 골라 지웠으면 되돌리는 것도 한 번이어야 한다."""
+    ids = [session.add_text(0, f"t{i}") for i in range(3)]
+    paths = [sel.usertext(0, t) for t in ids]
+    steps = len(session.history)
+    session.delete_paths(paths)
+    assert len(session.history) - steps == 1
+
+    session.history.undo()
+    assert all(session.spec.text_by_id(t) is not None for t in ids)
+
+
+def test_undo_restores_deleted_text_with_its_style(session):
+    tid = session.add_text(0, "mine")
+    path = sel.usertext(0, tid)
+    session.set_prop(path, "fontsize", 15.0)
+    session.delete_paths([path])
+    session.history.undo()
+    assert session.spec.text_by_id(tid).fontsize == 15.0
+
+
+def test_deleting_nothing_records_nothing(session):
+    steps = len(session.history)
+    assert session.delete_paths(["ax0.title"]) == 0
+    assert len(session.history) == steps
+
+
+def test_delete_then_undo_saves_the_same_bytes(session, tmp_path):
+    """되돌린 뒤 저장한 결과가 지우기 전과 달라지면 정규형이 깨진다.
+
+    실행 취소는 부수 변경을 역순으로 되돌리므로 spec.texts의 메모리 순서가
+    뒤집힌다. canon이 저장 경계에서 다시 정렬하는 덕에 바이트는 같아야 한다.
+    """
+    for i in range(3):
+        session.add_text(0, f"메모{i}")
+    session.save(install_hook=False)
+    before = session.style_path.read_text(encoding="utf-8")
+
+    session.delete_paths([sel.usertext(0, t.id) for t in session.spec.texts])
+    session.history.undo()
+    session.save(install_hook=False)
+    assert session.style_path.read_text(encoding="utf-8") == before
