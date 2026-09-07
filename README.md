@@ -10,6 +10,10 @@ pip install "figtune[gui]"
 figtune plot_fig3.py
 ```
 
+The `[gui]` extra pulls in Qt, which is 650MB. If you only need the
+command line — `render`, `refresh`, `merge`, `normalize` — plain
+`pip install figtune` is a quarter of the size and enough.
+
 ---
 
 ## What it does

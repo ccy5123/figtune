@@ -178,7 +178,18 @@ def main(argv=None) -> int:
         print(args.out)
         return 0
 
-    from .ui.qt.main import launch
+    try:
+        from .ui.qt.main import launch
+    except ImportError:
+        # Qt는 650MB라 기본 설치에 넣지 않는다. render·refresh·merge·normalize는
+        # 그것 없이 돌아간다. 다만 여기까지 왔다는 것은 GUI를 열려는 것이고,
+        # 그대로 두면 matplotlib 안쪽의 traceback만 뜬다 — figtune이라는 말도,
+        # 무엇을 깔아야 하는지도 나오지 않아 패키지가 깨진 것처럼 보인다.
+        print(_t("GUI를 열려면 Qt가 필요합니다. 다음으로 설치하세요:\n"
+                 "    pip install \"figtune[gui]\"\n"
+                 "Qt 없이도 render, refresh, merge, normalize는 씁니다."),
+              file=sys.stderr)
+        return 3
     return launch(script, python=args.python, spec_in=args.spec_in,
                   spec_out=args.spec_out, png_out=args.png_out, dpi=args.dpi,
                   lang=args.lang)

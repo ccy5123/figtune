@@ -195,6 +195,12 @@ MESSAGES = {
         "to bring this back.",
     "figtune이 지정한 값 (override)": "Value set by figtune (override)",
     "쉼표로 구분": "comma separated",
+    "GUI를 열려면 Qt가 필요합니다. 다음으로 설치하세요:\n"
+    "    pip install \"figtune[gui]\"\n"
+    "Qt 없이도 render, refresh, merge, normalize는 씁니다.":
+        "Opening the GUI needs Qt. Install it with:\n"
+        "    pip install \"figtune[gui]\"\n"
+        "render, refresh, merge and normalize work without it.",
     "색 선택": "Pick a color",
     "기본 색": "Base colors",
     "CSS 색": "CSS colors",
