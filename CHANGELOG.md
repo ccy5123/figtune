@@ -3,7 +3,7 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/)를 따르고,
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 따른다.
 
-## [1.0.0] — 미공개
+## [1.0.0] — 2026-09-07
 
 첫 정식 릴리스. **리눅스에서만 검증했다** — CI가 ubuntu 단독이므로 다른 OS는
 "아마 돌지만 아무도 확인하지 않았다"가 정직한 상태다. macOS 지원은 v3 예정.
