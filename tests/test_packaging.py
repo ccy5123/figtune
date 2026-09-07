@@ -88,11 +88,11 @@ def test_the_one_line_description_is_english():
     assert not HANGUL.search(desc), f"한국어가 남아 있습니다: {desc}"
 
 
-# 영어 README에 한국어가 남아도 되는 자리. 전부 한글이 **설명 대상**이라
-# 영어로 바꾸면 뜻이 사라지는 곳이다. 여기에 뭔가 추가하기 전에, 그것이 정말
-# 번역할 수 없는 것인지 먼저 확인할 것.
+# 영어 README에 한국어가 남아도 되는 자리. 둘 다 한글이 **화면에 무엇이
+# 뜨는지 보여주는 예시**라, 영어로 바꾸면 그 문장이 설명하려던 것이 사라진다.
+# 산문에는 한 글자도 없어야 한다 — 여기에 뭔가 추가하기 전에, 그것이 정말
+# 번역할 수 없는 예시인지 먼저 확인할 것.
 ALLOWED_HANGUL = (
-    "README.ko.md",          # 언어 전환 링크
     "한국어 / English",       # 언어 메뉴가 각 언어를 제 언어로 적는다는 설명
     "AaBbCc 123 가나다",      # 글꼴 드롭다운의 미리보기 표본
 )
@@ -113,6 +113,22 @@ def test_both_readmes_point_at_each_other():
     ko = (ROOT / "README.ko.md").read_text(encoding="utf-8")
     assert "README.ko.md" in en, "영어 README에 한국어판 링크가 없습니다"
     assert "README.md" in ko, "한국어 README에 영어판 링크가 없습니다"
+
+
+LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def test_the_pypi_readme_has_no_relative_links():
+    """PyPI는 상대 링크를 저장소 기준으로 고쳐 주지 않는다.
+
+    `[한국어](README.ko.md)`는 그대로 렌더되어 pypi.org 기준으로 풀린다.
+    누르면 404다. 업로드한 설명은 나중에 고칠 수 없으므로, 링크 하나가
+    그 버전 내내 깨진 채로 남는다.
+    """
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    relative = [u for u in LINK.findall(text)
+                if not u.startswith(("http://", "https://", "#"))]
+    assert not relative, f"PyPI에서 깨질 상대 링크입니다: {relative}"
 
 
 def test_the_install_line_is_the_published_one():

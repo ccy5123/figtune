@@ -1,6 +1,6 @@
 # figtune
 
-English · **[한국어](README.ko.md)**
+English · **[Korean](https://github.com/ccy5123/figtune/blob/main/README.ko.md)**
 
 A desktop tool that fine-tunes an already-drawn matplotlib/seaborn figure in a
 GUI and leaves the result as **reproducible Python code**.

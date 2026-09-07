@@ -1,6 +1,6 @@
 # figtune
 
-**[English](README.md)** · 한국어
+**[English](https://github.com/ccy5123/figtune/blob/main/README.md)** · 한국어
 
 이미 그려진 matplotlib/seaborn figure를 GUI로 미세조정하고, 그 조정이
 **재현 가능한 Python 코드로 남는** 데스크톱 도구.
