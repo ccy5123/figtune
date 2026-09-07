@@ -15,7 +15,8 @@ from matplotlib.backends.backend_qtagg import (                   # noqa: E402
 from PySide6.QtCore import Qt, Signal  # noqa: E402
 from PySide6.QtGui import (QAction, QColor, QKeySequence,  # noqa: E402
                            QPainter, QPen)
-from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog,  # noqa: E402
+from PySide6.QtWidgets import (QAbstractItemView,  # noqa: E402
+                               QApplication, QDialog, QFileDialog,
                                QHBoxLayout, QInputDialog, QLabel, QMainWindow,
                                QMenu, QMessageBox, QPlainTextEdit, QPushButton,
                                QScrollArea,
@@ -44,6 +45,23 @@ BASE_DPI = 100.0
 # 이보다 적게 움직이면 끌기가 아니라 클릭으로 본다. 손떨림으로 글자가
 # 밀리지 않을 만큼은 되고, 옮기려는 의도를 막을 만큼 크지는 않은 값.
 DRAG_THRESHOLD = 3.0
+
+
+def _adds_to_selection(event) -> bool:
+    """Shift나 Ctrl을 누른 채인가.
+
+    PowerPoint는 도형 선택에서 둘을 같게 다룬다 — 어느 쪽이든 토글-추가다.
+    둘이 갈리는 것은 끌기(복제 vs 축 고정)와 목록에서이지 캔버스가 아니다.
+    범위 선택은 목록인 트리가 맡는다.
+
+    matplotlib은 키 상태를 자기 key_press 이벤트로만 갱신하므로, 캔버스가
+    포커스를 갖기 전에 누른 수식키를 놓친다. Qt에 한 번 더 묻는다.
+    """
+    key = (getattr(event, "key", None) or "").lower()
+    if "shift" in key or "control" in key or "ctrl" in key:
+        return True
+    mods = QApplication.keyboardModifiers()
+    return bool(mods & (Qt.ShiftModifier | Qt.ControlModifier))
 
 
 def _at(event, x, y):
@@ -109,7 +127,7 @@ class Canvas(FigureCanvasQTAgg):
         self.bar.edited.connect(self._bar_edit)
         self.bar.more.connect(lambda: self.open_dialog(self._target))
         self._target = None         # 마지막으로 고른 대상 (대화상자·툴바용)
-        self._highlight = None      # (x, y, w, h) Qt 좌표 — 화면에만 그린다
+        self._highlight = []        # (path, x, y, w, h) Qt 좌표 — 화면에만 그린다
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
         self.mpl_connect("draw_event", lambda _e: self._after_draw())
@@ -141,8 +159,16 @@ class Canvas(FigureCanvasQTAgg):
                                    event.x, event.y)
                    if with_artists else None)
         return self.hitmap().at(event.x, event.y,
-                                selected=getattr(self.win, "_current", None),
+                                selected=self._sole_selection(),
                                 artists=artists)
+
+    def _sole_selection(self) -> str | None:
+        """핸들을 내줄 대상. 여러 개를 골랐으면 없다.
+
+        여러 개를 고른 채 핸들이 살아 있으면 무엇의 크기가 바뀔지 모호하다.
+        """
+        picked = self.win.selection()
+        return picked[0] if len(picked) == 1 else None
 
     # --- 클릭 -------------------------------------------------------------
 
@@ -166,6 +192,10 @@ class Canvas(FigureCanvasQTAgg):
             return
 
         self._target = target
+        if _adds_to_selection(event):
+            # 고르기만 한다. 더하려고 누른 것이지 옮기거나 고치려는 것이 아니다.
+            self.win.toggle_path(target.path)
+            return
         self.win.select(target.path)
         if event.dblclick:
             self.open_dialog(target)
@@ -245,34 +275,46 @@ class Canvas(FigureCanvasQTAgg):
 
     # --- 선택 표시 --------------------------------------------------------
 
-    def set_highlight(self, path: str | None, target=None):
-        """고른 대상에 테두리를 친다.
+    def set_highlight(self, paths, target=None):
+        """고른 대상마다 테두리를 친다.
 
         Qt로 그린다. matplotlib artist로 그리면 내보낸 그림에까지 테두리가
         따라 들어간다.
+
+        하나만 그리면 여러 개를 고른 채로 무엇이 고쳐질지 알 수 없다.
         """
-        self._highlight_path = path
+        if isinstance(paths, str) or paths is None:
+            paths = [paths] if paths else []
+        self._highlight_paths = list(paths)
         # 캔버스에서 고른 것이면 대상을 함께 기억한다. 트리에서 고른 경우는
         # 대상이 없으므로 path로만 맞춘다(축은 조금 넓게 잡힌다).
         self._highlight_target = target
         self._recompute_highlight()
         self.update()
 
+    def highlights(self) -> list:
+        return list(getattr(self, "_highlight", []) or [])
+
+    def _box_for(self, path):
+        target = getattr(self, "_highlight_target", None)
+        # 기준(마지막) 대상에만 캔버스에서 잡은 target을 쓴다. 다른 것에
+        # 갖다 붙이면 엉뚱한 상자가 나온다.
+        if target is not None and target.path != path:
+            target = None
+        box = self.hitmap().bbox_of(path, target)
+        return box if box is not None else self._artist_box(path)
+
     def _recompute_highlight(self):
-        path = getattr(self, "_highlight_path", None)
-        self._highlight = None
-        if not path:
-            return
-        box = self.hitmap().bbox_of(
-            path, getattr(self, "_highlight_target", None))
-        if box is None:
-            box = self._artist_box(path)
-        if box is None:
-            return
+        self._highlight = []
         dpr = getattr(self, "device_pixel_ratio", 1) or 1
-        x0, y0, x1, y1 = box
-        self._highlight = (x0 / dpr, self.height() - y1 / dpr,
-                           (x1 - x0) / dpr, (y1 - y0) / dpr)
+        for path in getattr(self, "_highlight_paths", []):
+            box = self._box_for(path)
+            if box is None:
+                continue
+            x0, y0, x1, y1 = box
+            self._highlight.append(
+                (path, x0 / dpr, self.height() - y1 / dpr,
+                 (x1 - x0) / dpr, (y1 - y0) / dpr))
 
     def _artist_box(self, path):
         """지도에 없는 대상(선·점 등)은 artist에서 직접 잰다."""
@@ -299,17 +341,22 @@ class Canvas(FigureCanvasQTAgg):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if not self._highlight:
+        boxes = self.highlights()
+        if not boxes:
             return
-        x, y, w, h = self._highlight
         painter = QPainter(self)
         pen = QPen(QColor("#2c7be5"))
         pen.setWidth(1)
         pen.setStyle(Qt.DashLine)
         painter.setPen(pen)
-        painter.drawRect(int(x) - 2, int(y) - 2, int(w) + 4, int(h) + 4)
-        if sel.parse(self._highlight_path).kind == "axes":
-            self._paint_handles(painter, x, y, w, h)
+        for _path, x, y, w, h in boxes:
+            painter.drawRect(int(x) - 2, int(y) - 2, int(w) + 4, int(h) + 4)
+        # 핸들은 하나만 골랐을 때만. 여러 개에 붙으면 무엇의 크기가 바뀌는지
+        # 모호하고, 겹친 상자들 위에서 어느 것을 잡았는지도 알 수 없다.
+        if len(boxes) == 1:
+            path, x, y, w, h = boxes[0]
+            if sel.parse(path).kind == "axes":
+                self._paint_handles(painter, x, y, w, h)
         painter.end()
 
     def _paint_handles(self, painter, x, y, w, h):
@@ -358,9 +405,8 @@ class Canvas(FigureCanvasQTAgg):
             return
         if not self.editor.active:
             self.setCursor(direct.CURSORS.get(
-                self.hitmap().cursor(
-                    event.x, event.y,
-                    selected=getattr(self.win, "_current", None)),
+                self.hitmap().cursor(event.x, event.y,
+                                     selected=self._sole_selection()),
                 Qt.ArrowCursor))
 
     def _drag_to(self, event):
@@ -481,7 +527,9 @@ class MainWindow(QMainWindow):
     def __init__(self, script: str | Path, python: str | None = None,
                  spec_in=None, spec_out=None, png_out=None, dpi: int = 300):
         super().__init__()
-        self._current: str | None = None      # 지금 고른 selector
+        # 고른 selector들. 마지막 것이 '기준' — 핸들과 미니 툴바가 그것을
+        # 따르고, 트리와 캔버스가 같은 것을 가리키게 한다.
+        self._selection: list[str] = []
         # spec_out/png_out은 PowerPoint 애드인이 결과를 회수하는 경로다.
         self.spec_out, self.png_out, self.export_dpi = spec_out, png_out, dpi
         self.session = Session(python=python)
@@ -495,6 +543,8 @@ class MainWindow(QMainWindow):
         self.canvas = Canvas(self)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels([_t("요소")])
+        # 트리는 목록이다 — Shift 범위와 Ctrl 개별이 사는 곳이 여기다.
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._tree_selected)
 
         self.inspector = Inspector()
@@ -610,35 +660,72 @@ class MainWindow(QMainWindow):
             root.child(i).setExpanded(True)
 
     def _tree_selected(self):
-        items = self.tree.selectedItems()
-        if not items:
-            return
-        path = items[0].data(0, Qt.UserRole)
-        if path:
-            self.select(path, from_tree=True)
+        """트리에서 고른 것을 그대로 받는다.
+
+        Shift 범위와 Ctrl 개별은 Qt가 처리한다 — 여기서는 결과만 읽는다.
+        그룹 노드(path 없음)는 건너뛴다.
+        """
+        paths = [it.data(0, Qt.UserRole) for it in self.tree.selectedItems()]
+        paths = [p for p in paths if p]
+        if paths:
+            self.select_paths(paths, from_tree=True)
 
     # --- 선택 / 편집 -----------------------------------------------------
 
+    @property
+    def _current(self) -> str | None:
+        """기준 selector — 가장 마지막에 고른 것.
+
+        핸들·미니 툴바·상태줄처럼 '하나'를 전제하는 곳이 이것을 본다.
+        속성으로 두어 단일 선택을 전제하던 자리들이 그대로 동작한다.
+        """
+        return self._selection[-1] if self._selection else None
+
+    def selection(self) -> list[str]:
+        return list(self._selection)
+
     def select(self, path: str | None, from_tree: bool = False):
-        self._current = path
+        self.select_paths([path] if path else [], from_tree=from_tree)
+
+    def toggle_path(self, path: str, from_tree: bool = False):
+        """PowerPoint의 Shift/Ctrl 클릭 — 있으면 빼고 없으면 더한다.
+
+        뺄 방법이 없으면 잘못 고른 하나를 되돌리려고 처음부터 다시 골라야 한다.
+        """
+        picked = self.selection()
+        if path in picked:
+            picked.remove(path)
+        else:
+            picked.append(path)
+        self.select_paths(picked, from_tree=from_tree)
+
+    def select_paths(self, paths, from_tree: bool = False):
+        seen, picked = set(), []
+        for p in paths:
+            if p and p not in seen:
+                seen.add(p)
+                picked.append(p)
+        self._selection = picked
         self.canvas.set_highlight(
-            path, getattr(self.canvas, "_target", None)
+            picked, getattr(self.canvas, "_target", None)
             if not from_tree else None)
-        if path is None:
+        if not picked:
             self.inspector.show_path(None, {}, set())
             self.canvas.bar.hide_bar()
             return
+        path = picked[-1]
         vals = self.session.values(path)
         over = {n for n in self.session.spec.of(path)}
         if sel.parse(path).kind == "usertext":
             over = set(vals)
         self.inspector.show_path(path, vals, over)
-        self.status(path)
+        self.status(path if len(picked) == 1
+                    else _t("{n}개 선택됨", n=len(picked)))
         if not from_tree:
-            self._sync_tree_selection(path)
+            self._sync_tree_selection(picked)
 
     def has_selection(self) -> bool:
-        return bool(getattr(self, "_current", None)) or self.canvas.bar.shown
+        return bool(self._selection) or self.canvas.bar.shown
 
     def clear_selection(self):
         """고른 것을 놓는다 — 막대·테두리·트리 표시가 함께 사라진다.
@@ -654,14 +741,21 @@ class MainWindow(QMainWindow):
         self.canvas.setFocus()
         self.status(_t("선택 해제"))
 
-    def _sync_tree_selection(self, path):
-        it = self.tree.findItems("", Qt.MatchContains | Qt.MatchRecursive, 0)
-        for item in it:
-            if item.data(0, Qt.UserRole) == path:
-                self.tree.blockSignals(True)
-                self.tree.setCurrentItem(item)
-                self.tree.blockSignals(False)
-                return
+    def _sync_tree_selection(self, paths):
+        # 문자열 하나가 들어오면 글자 단위로 풀려 아무것도 안 맞는다.
+        # 조용히 빈 선택이 되는 종류의 사고라 여기서 막는다.
+        wanted = {paths} if isinstance(paths, str) else set(paths)
+        items = self.tree.findItems("", Qt.MatchContains | Qt.MatchRecursive, 0)
+        self.tree.blockSignals(True)
+        self.tree.clearSelection()
+        last = None
+        for item in items:
+            if item.data(0, Qt.UserRole) in wanted:
+                item.setSelected(True)
+                last = item
+        if last is not None:
+            self.tree.setCurrentItem(last)
+        self.tree.blockSignals(False)
 
     def _on_edit(self, path, name, value):
         try:

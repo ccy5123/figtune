@@ -663,8 +663,8 @@ def test_double_click_does_not_open_the_caret(win):
 def test_selection_draws_a_box_around_the_target(win):
     ax = win.session.fig.axes[0]
     click(win.canvas, *center(win, ax.title))
-    assert win.canvas._highlight is not None
-    x, y, w, h = win.canvas._highlight
+    assert win.canvas.highlights()
+    _path, x, y, w, h = win.canvas.highlights()[0]
     assert w > 0 and h > 0
 
 
@@ -674,16 +674,16 @@ def test_highlight_follows_the_exact_target_not_just_the_path(win):
     ax = win.session.fig.axes[0]
     tick = next(t for t in ax.get_xticklabels() if t.get_text())
     click(win.canvas, *center(win, tick))
-    _x, _y, _w, h = win.canvas._highlight
+    _path, _x, _y, _w, h = win.canvas.highlights()[0]
     box_h = ax.get_window_extent().height
     assert h < box_h / 2, "테두리가 축 상자 전체를 덮었습니다"
 
 
 def test_clearing_the_selection_clears_the_box(win):
     win.select("ax0.title")
-    assert win.canvas._highlight is not None
+    assert win.canvas.highlights()
     win.select(None)
-    assert win.canvas._highlight is None
+    assert not win.canvas.highlights()
     assert not win.canvas.bar.shown
 
 
@@ -756,11 +756,11 @@ def test_escape_clears_the_whole_selection(win):
     """그림만 보고 싶을 때 막대·테두리가 겹쳐 있으면 거슬린다."""
     ax = win.session.fig.axes[0]
     click(win.canvas, *center(win, ax.get_legend()))
-    assert win.canvas.bar.shown and win.canvas._highlight is not None
+    assert win.canvas.bar.shown and win.canvas.highlights()
 
     _escape(win.canvas)
     assert not win.canvas.bar.shown
-    assert win.canvas._highlight is None
+    assert not win.canvas.highlights()
     assert win._current is None
 
 
@@ -1045,3 +1045,91 @@ def test_pan_mode_leaves_the_cursor_to_the_toolbar(win):
         assert win.canvas.cursor().shape() != Qt.SizeAllCursor
     finally:
         win.toolbar.pan()
+
+
+# --- 다중 선택 ---------------------------------------------------------------
+#
+# PowerPoint는 도형 선택에서 Shift와 Ctrl을 같게 다룬다 — 어느 쪽이든
+# 토글-추가다. 둘이 갈리는 것은 끌기(복제 vs 축 고정)와 목록에서다.
+# 그래서 캔버스는 둘을 같게 두고, 범위 선택은 트리가 맡는다.
+
+def add_click(c, x, y, key="shift"):
+    c._press(MouseEvent("button_press_event", c, x, y, 1, key=key))
+    c._release(MouseEvent("button_release_event", c, x, y, 1, key=key))
+
+
+@pytest.mark.parametrize("key", ["shift", "control"])
+def test_modifier_click_adds_to_the_selection(win, key):
+    fig = win.session.fig
+    click(win.canvas, *center(win, fig.axes[0].title))
+    assert win.selection() == ["ax0.title"]
+
+    add_click(win.canvas, *center(win, fig.axes[1].title), key=key)
+    assert win.selection() == ["ax0.title", "ax1.title"]
+
+
+@pytest.mark.parametrize("key", ["shift", "control"])
+def test_modifier_click_on_a_selected_one_removes_it(win, key):
+    """PowerPoint와 같이 토글이다. 뺄 방법이 없으면 잘못 고른 것을 되돌리려고
+    처음부터 다시 골라야 한다."""
+    fig = win.session.fig
+    click(win.canvas, *center(win, fig.axes[0].title))
+    add_click(win.canvas, *center(win, fig.axes[1].title), key=key)
+    add_click(win.canvas, *center(win, fig.axes[1].title), key=key)
+    assert win.selection() == ["ax0.title"]
+
+
+def test_plain_click_replaces_the_selection(win):
+    fig = win.session.fig
+    click(win.canvas, *center(win, fig.axes[0].title))
+    add_click(win.canvas, *center(win, fig.axes[1].title))
+    click(win.canvas, *center(win, fig.axes[1].title))
+    assert win.selection() == ["ax1.title"]
+
+
+def test_clearing_drops_every_selected_element(win):
+    fig = win.session.fig
+    click(win.canvas, *center(win, fig.axes[0].title))
+    add_click(win.canvas, *center(win, fig.axes[1].title))
+    win.clear_selection()
+    assert win.selection() == []
+
+
+def test_every_selected_element_is_outlined(win):
+    """하나만 테두리가 뜨면 무엇이 고쳐질지 알 수 없다."""
+    fig = win.session.fig
+    click(win.canvas, *center(win, fig.axes[0].title))
+    add_click(win.canvas, *center(win, fig.axes[1].title))
+    assert len(win.canvas.highlights()) == 2
+
+
+def test_handles_are_suppressed_while_multiple_are_selected(win):
+    """여러 개를 고른 채 핸들이 살아 있으면 무엇의 크기가 바뀔지 모호하다."""
+    win.select("ax0")
+    bb = win.session.fig.axes[0].get_window_extent()
+    assert win.canvas.targets_at(
+        MouseEvent("motion_notify_event", win.canvas, bb.x1, bb.y1, None))
+
+    win.select_paths(["ax0", "ax1"])
+    ts = win.canvas.targets_at(
+        MouseEvent("motion_notify_event", win.canvas, bb.x1, bb.y1, None))
+    assert not [t for t in ts if t.kind == "resize"]
+
+
+def test_tree_allows_range_and_toggle_selection(win):
+    """트리는 목록이다 — Shift 범위와 Ctrl 개별이 사는 곳은 여기다."""
+    from PySide6.QtWidgets import QAbstractItemView
+
+    assert win.tree.selectionMode() == QAbstractItemView.ExtendedSelection
+
+
+def test_tree_multi_selection_reaches_the_window(win):
+    from PySide6.QtCore import Qt
+
+    items = win.tree.findItems("", Qt.MatchContains | Qt.MatchRecursive, 0)
+    picks = [it for it in items
+             if it.data(0, Qt.UserRole) in ("ax0.title", "ax1.title")]
+    assert len(picks) == 2
+    for it in picks:
+        it.setSelected(True)
+    assert sorted(win.selection()) == ["ax0.title", "ax1.title"]
