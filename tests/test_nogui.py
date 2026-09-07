@@ -20,8 +20,7 @@ def without_qt(monkeypatch):
         else __builtins__.__import__
 
     def blocked(name, *a, **k):
-        if name.startswith("figtune.ui.qt") or name == "PySide6" \
-                or name.startswith("PySide6."):
+        if name.startswith(("figtune.ui.qt", "PySide6")):
             raise ImportError("No module named 'PySide6'")
         return real(name, *a, **k)
 
