@@ -1394,3 +1394,101 @@ def test_deleting_while_editing_text_does_not_fire(win):
     win.canvas.keyPressEvent(
         QKeyEvent(QKeyEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
     assert win.session.spec.text_by_id(tid) is not None
+
+
+# --- 붙기(snap) ---------------------------------------------------------------
+
+def _box(win, path):
+    """artist에서 직접 잰다.
+
+    canvas._box_for는 판정 지도 캐시를 먼저 보는데, 그 캐시는 다시 그릴 때만
+    갱신된다. 테스트에는 이벤트 루프가 없어 draw_idle이 처리되지 않으므로
+    끌기 도중에는 끌기 전 값이 나온다.
+    """
+    from figtune.core import selector as sel
+    art = sel.resolve(win.session.fig, path)
+    bb = art.get_window_extent(win.canvas.get_renderer())
+    return (bb.x0, bb.y0, bb.x1, bb.y1)
+
+
+def _drag_hold(c, x0, y0, x1, y1):
+    """떼지 않고 끄는 중까지만. 종이 맞추기는 뗄 때 일어나므로, 화면
+    좌표로 무언가를 재려면 그 전에 재야 한다."""
+    press(c, x0, y0)
+    move(c, x1, y1)
+
+
+def test_dragging_snaps_to_another_element(win):
+    """눈으로 맞춘 정렬은 1~2픽셀씩 어긋난다. 인쇄하면 보인다.
+
+    어느 정렬에 붙을지는 미리 알 수 없다 — 모서리끼리가 가까울 수도,
+    가운데끼리가 가까울 수도 있다. 확인할 것은 '붙었으면 정확히 맞는다'다.
+    """
+    fig = win.session.fig
+    target_left = _box(win, "ax1.title")[0]
+    left = _box(win, "ax0.title")[0]
+    x, y = center(win, fig.axes[0].title)
+
+    _drag_hold(win.canvas, x, y, x + (target_left - left) - 3, y)
+    box = _box(win, "ax0.title")
+    guides = [g for g in win.canvas.guides() if g.axis == "x"]
+    release(win.canvas, x + (target_left - left) - 3, y)
+
+    assert guides, "붙지 않았습니다"
+    lines = (box[0], (box[0] + box[2]) / 2, box[2])
+    assert min(abs(v - guides[0].at) for v in lines) < 0.01, \
+        f"안내선 {guides[0].at}에 정확히 맞지 않았습니다: {lines}"
+
+
+def test_a_far_drop_is_left_alone(win):
+    """임계값 밖에서는 원하는 자리에 그대로 놓여야 한다."""
+    fig = win.session.fig
+    left = _box(win, "ax0.title")[0]
+    x, y = center(win, fig.axes[0].title)
+    _drag_hold(win.canvas, x, y, x + 40, y)
+    moved = _box(win, "ax0.title")[0] - left
+    release(win.canvas, x + 40, y)
+    assert 38 < moved < 42, moved
+
+
+def test_guides_appear_while_snapped_and_go_when_dropped(win):
+    """무엇에 붙었는지 보이지 않으면 왜 튀었는지 알 수 없다."""
+    fig = win.session.fig
+    target_left = _box(win, "ax1.title")[0]
+    left = _box(win, "ax0.title")[0]
+    x, y = center(win, fig.axes[0].title)
+
+    press(win.canvas, x, y)
+    move(win.canvas, x + (target_left - left) - 3, y)
+    assert win.canvas.guides(), "안내선이 없습니다"
+    release(win.canvas, x + (target_left - left) - 3, y)
+    assert not win.canvas.guides(), "떼었는데 안내선이 남았습니다"
+
+
+def test_alt_turns_snapping_off(win, monkeypatch):
+    """수식키를 누르면 원하는 자리에 정확히 둘 수 있어야 한다."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setattr(QApplication, "keyboardModifiers",
+                        staticmethod(lambda: Qt.AltModifier))
+    fig = win.session.fig
+    target_left = _box(win, "ax1.title")[0]
+    left = _box(win, "ax0.title")[0]
+    x, y = center(win, fig.axes[0].title)
+
+    _drag_hold(win.canvas, x, y, x + (target_left - left) - 3, y)
+    now = _box(win, "ax0.title")[0]
+    release(win.canvas, x + (target_left - left) - 3, y)
+    assert abs(now - (target_left - 3)) < 1.5, f"붙어 버렸습니다: {now}"
+
+
+def test_the_thing_being_dragged_is_not_its_own_target(win):
+    """자기 자신에게 붙으면 끌기가 그 자리에 얼어붙는다."""
+    fig = win.session.fig
+    left = _box(win, "ax0.title")[0]
+    x, y = center(win, fig.axes[0].title)
+    _drag_hold(win.canvas, x, y, x + 25, y)
+    now = _box(win, "ax0.title")[0]
+    release(win.canvas, x + 25, y)
+    assert now > left + 15, f"제자리에 얼어붙었습니다: {left} -> {now}"

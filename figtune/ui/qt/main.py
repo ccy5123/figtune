@@ -31,6 +31,7 @@ from ...core import hit  # noqa: E402
 from ...core import layout  # noqa: E402
 from ...core import props as P  # noqa: E402
 from ...core import selector as sel  # noqa: E402
+from ...core import snap  # noqa: E402
 from ...core.history import Command  # noqa: E402
 from ...core.session import EXISTS, Session  # noqa: E402
 from ...i18n import t as _t  # noqa: E402
@@ -373,6 +374,7 @@ class Canvas(FigureCanvasQTAgg):
         painter.setPen(pen)
         for _path, x, y, w, h in boxes:
             painter.drawRect(int(x) - 2, int(y) - 2, int(w) + 4, int(h) + 4)
+        self._paint_guides(painter)
         # 핸들은 하나만 골랐을 때만. 여러 개에 붙으면 무엇의 크기가 바뀌는지
         # 모호하고, 겹친 상자들 위에서 어느 것을 잡았는지도 알 수 없다.
         if len(boxes) == 1:
@@ -380,6 +382,25 @@ class Canvas(FigureCanvasQTAgg):
             if sel.parse(path).kind == "axes":
                 self._paint_handles(painter, x, y, w, h)
         painter.end()
+
+    def _paint_guides(self, painter):
+        """무엇에 붙었는지 보여준다. 안 보이면 왜 튀었는지 알 수 없다."""
+        guides = self.guides()
+        if not guides:
+            return
+        dpr = getattr(self, "device_pixel_ratio", 1) or 1
+        pen = QPen(QColor("#e8590c"))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        for g in guides:
+            lo, hi = g.lo / dpr, g.hi / dpr
+            if g.axis == "x":
+                x = int(g.at / dpr)
+                painter.drawLine(x, int(self.height() - hi),
+                                 x, int(self.height() - lo))
+            else:
+                y = int(self.height() - g.at / dpr)
+                painter.drawLine(int(lo), y, int(hi), y)
 
     def _paint_handles(self, painter, x, y, w, h):
         """크기를 바꿀 수 있다는 표시. 고른 뒤에만 나타난다 — Origin과 같다."""
@@ -440,6 +461,7 @@ class Canvas(FigureCanvasQTAgg):
         befores = [self.win.session.recorded_value(d.path, self._moved_prop(d))
                    for d in drags]
         self._drag = (drags, befores, extras)
+        self._snap_from = self._snap_setup(drags, event)
 
     def _motion(self, event):
         if self.viewing():
@@ -461,17 +483,78 @@ class Canvas(FigureCanvasQTAgg):
                                      selected=self._sole_selection()),
                 Qt.ArrowCursor))
 
+    # --- 붙기 -------------------------------------------------------------
+
+    def guides(self) -> list:
+        """지금 그려야 할 안내선들. 끌고 있지 않으면 비어 있다."""
+        return list(getattr(self, "_guides", []) or [])
+
+    def _snap_setup(self, drags, event):
+        """끌기 시작에 붙기 재료를 모은다.
+
+        상대는 움직이지 않으므로 한 번만 모은다 — 마우스 이동마다 다시 재면
+        2패널 그림 기준 수 ms가 붙어 끌기가 무거워진다.
+        """
+        moving = {d.path for d in drags}
+        box = self._union_box(moving)
+        if box is None:
+            return None
+        others = []
+        for node in self.win.session.tree.walk():
+            if node.path in moving or node.kind in ("group", "figure"):
+                continue
+            b = self._true_box(node.path)
+            if b is not None:
+                others.append(b)
+        # 종이 자체에도 붙는다 — 가운데 맞추기가 가장 흔하다
+        fb = self.figure.get_window_extent()
+        others.append((float(fb.x0), float(fb.y0), float(fb.x1), float(fb.y1)))
+        return box, others, (event.x, event.y)
+
+    def _true_box(self, path):
+        """붙기용 상자 — artist에서 직접 잰다.
+
+        판정 지도의 영역은 클릭하기 쉬우라고 2px 패딩이 붙어 있다. 그것으로
+        맞추면 붙은 자리가 그만큼 어긋난다. 붙기는 눈에 보이는 기하여야 한다.
+        """
+        return self._artist_box(path) or self._box_for(path)
+
+    def _union_box(self, paths):
+        boxes = [b for b in (self._true_box(p) for p in paths) if b is not None]
+        if not boxes:
+            return None
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+    def _snapped(self, event) -> tuple[float, float]:
+        """커서 위치에 붙기 보정을 얹는다. 안내선도 여기서 정해진다."""
+        self._guides = []
+        setup = getattr(self, "_snap_from", None)
+        if setup is None:
+            return event.x, event.y
+        box, others, (sx, sy) = setup
+        dx, dy = event.x - sx, event.y - sy
+        moved = (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
+        # Alt를 누르고 있으면 붙지 않는다. 원하는 자리에 정확히 둘 수 있어야
+        # 한다 — 붙기가 늘 이기면 미세 조정이 불가능해진다.
+        off = bool(QApplication.keyboardModifiers() & Qt.AltModifier)
+        r = snap.snap(moved, others, threshold=0.0 if off else snap.THRESHOLD)
+        self._guides = r.guides
+        return event.x + r.dx, event.y + r.dy
+
     def _drag_to(self, event):
         drags = self._drag[0]
         # 실제로 움직이기 시작했을 때만 막대를 치운다. 누르는 순간 치우면
         # 끌지 않고 고르기만 해도 사라진다.
         self.bar.hide_bar()
-        last = None
+        # 붙기 보정은 커서에 얹는다. 대상마다 속성의 단위가 달라도(축은
+        # figure 비율, 텍스트는 축 좌표) 화면에서 맞추면 규칙이 하나다.
+        ex, ey = self._snapped(event)
         for d in drags:
             # 각자 자기 좌표계에서 같은 커서 이동을 잰다. 대상마다 단위가
             # 달라도(축은 figure 비율, 텍스트는 축 좌표) 화면에서 간 거리는
             # 같아진다.
-            change = drag.update(self.figure, d, event.x, event.y)
+            change = drag.update(self.figure, d, ex, ey)
             if change is None:
                 continue
             # 끌기 도중에는 히스토리에 쌓지 않는다. 마우스 이동마다 한 칸씩
@@ -508,6 +591,10 @@ class Canvas(FigureCanvasQTAgg):
             return
         drags, befores, extras = self._drag
         self._drag = None
+        # 떼었으면 안내선은 뜻이 없다. 남으면 화면에 줄이 눌어붙는다.
+        self._guides = []
+        self._snap_from = None
+        self.update()
         if not any(d.moved for d in drags):
             self._collapse_to_pressed()
             return
