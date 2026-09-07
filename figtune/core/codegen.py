@@ -74,8 +74,13 @@ def _fig_legend(fig, **kw):
     if kw.get("fontsize") is not None:
         for t in leg.get_texts():
             t.set_fontsize(kw["fontsize"])
-    if kw.get("title_fontsize") is not None and leg.get_title() is not None:
-        leg.get_title().set_fontsize(kw["title_fontsize"])
+    title = leg.get_title()
+    if kw.get("title_fontsize") is not None and title is not None:
+        title.set_fontsize(kw["title_fontsize"])
+    if kw.get("fontfamily") is not None:
+        # The title is text too. Skipping it leaves one label in the old font.
+        for t in leg.get_texts() + ([title] if title is not None else []):
+            t.set_fontfamily(kw["fontfamily"])
     return leg
 
 
@@ -86,10 +91,20 @@ def _legend(ax, labels=None, **kw):
     get_legend_handles_labels() comes back empty. Calling ax.legend() as-is
     would drop the markers, so the handles are recovered from the old legend.
     """
-    if "fontfamily" in kw:
-        # A legend takes its font as prop(FontProperties); fontfamily= is
-        # silently ignored.
-        kw["prop"] = {{"family": kw.pop("fontfamily")}}
+    # A legend takes its font three ways: item labels via prop(FontProperties),
+    # the title via title_fontproperties, and title_fontsize, which cannot be
+    # combined with title_fontproperties. fontfamily= is silently ignored.
+    family = kw.pop("fontfamily", None)
+    title_size = kw.pop("title_fontsize", None)
+    if family is not None:
+        kw["prop"] = {{"family": family}}
+    title_font = {{}}
+    if family is not None:
+        title_font["family"] = family
+    if title_size is not None:
+        title_font["size"] = title_size
+    if title_font:
+        kw["title_fontproperties"] = title_font
     handles, found = ax.get_legend_handles_labels()
     if not handles:
         leg = ax.get_legend()

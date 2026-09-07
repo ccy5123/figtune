@@ -784,6 +784,9 @@ class MainWindow(QMainWindow):
         self.btn_font = QPushButton(_t("그림 전체 글꼴 바꾸기"))
         self.btn_font.clicked.connect(self.change_font_everywhere)
         lv.addWidget(self.btn_font)
+        self.btn_size = QPushButton(_t("그림 전체 글자 크기 바꾸기"))
+        self.btn_size.clicked.connect(self.change_size_everywhere)
+        lv.addWidget(self.btn_size)
 
         split = QSplitter()
         split.addWidget(left)
@@ -960,6 +963,8 @@ class MainWindow(QMainWindow):
         e.addSeparator()
         self._act(e, _t("그림 전체 글꼴 바꾸기…"), "Ctrl+Shift+F",
                   self.change_font_everywhere)
+        self._act(e, _t("그림 전체 글자 크기 바꾸기…"), "Ctrl+Shift+S",
+                  self.change_size_everywhere)
         e.addSeparator()
         self.delete_act = self._act(e, _t("삭제"), QKeySequence.Delete,
                                     self.delete_selection)
@@ -1103,6 +1108,46 @@ class MainWindow(QMainWindow):
         self.after_edit()
         self.status(_t("{n}개 대상의 글꼴을 {name}(으)로 바꿨습니다",
                        n=n, name=name))
+
+    def change_size_everywhere(self) -> None:
+        """그림 안의 모든 글자 크기를 한 번에 바꾼다.
+
+        눈금은 labelsize, 범례 제목은 title_fontsize다. 'fontsize'만 찾으면
+        그 둘이 조용히 빠져 '전체'가 전체가 아니게 된다 — REGISTRY에서 읽는다.
+        """
+        from .fontpicker import pick_size
+
+        picked = pick_size(self, _t("그림 전체 글자 크기 바꾸기"),
+                           self._median_size())
+        if picked is None:
+            return
+        mode, value = picked
+        if mode == "absolute":
+            n = self.session.apply_size_everywhere(value)
+            done = _t("{n}개 대상의 글자 크기를 {v}pt로 바꿨습니다",
+                      n=n, v=f"{value:g}")
+        else:
+            n = self.session.scale_size_everywhere(value)
+            done = _t("{n}개 대상의 글자 크기를 {v}배로 바꿨습니다",
+                      n=n, v=f"{value:g}")
+        self.canvas.draw_idle()
+        self.after_edit()
+        self.status(done)
+
+    def _median_size(self) -> float:
+        """대화상자에 미리 채울 값. 지금 그림에서 가장 흔한 크기.
+
+        고정값을 채우면 '모두 이 크기로'가 기본 상태에서도 그림을 바꾼다.
+        지금 크기 중 하나를 채워 두면 확인만 눌렀을 때 변화가 가장 작다.
+        """
+        sizes = []
+        for path, name in self.session.size_targets():
+            v = self.session.values(path).get(name)
+            if v is not None:
+                sizes.append(float(v))
+        if not sizes:
+            return 10.0
+        return sorted(sizes)[len(sizes) // 2]
 
     def delete_selection(self) -> None:
         paths = self.deletable()

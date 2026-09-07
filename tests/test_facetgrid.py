@@ -125,6 +125,32 @@ def test_figure_legend_is_editable_in_place(facet):
     assert leg.get_texts()[0].get_fontsize() == 9.0
 
 
+def test_figure_legend_font_reaches_the_title_too(facet):
+    """항목만 바뀌고 제목이 옛 글꼴로 남으면 '전체'가 전체가 아니다."""
+    from figtune.core import typefaces as T
+
+    leg = facet.fig.legends[0]
+    facet.set_prop("fig.legend", "title", "Group")
+    want = next(f.name for f in T.available()
+                if f.name != leg.get_texts()[0].get_fontfamily()[0])
+    facet.set_prop("fig.legend", "fontfamily", want)
+
+    leg = facet.fig.legends[0]
+    assert leg.get_texts()[0].get_fontfamily()[0] == want
+    assert leg.get_title().get_fontfamily()[0] == want
+
+
+def test_the_whole_figure_font_reaches_the_figure_legend(facet):
+    """fig.legend는 axes 바깥에 있다. 트리를 축만 훑으면 통째로 빠진다."""
+    from figtune.core import typefaces as T
+
+    leg = facet.fig.legends[0]
+    want = next(f.name for f in T.available()
+                if f.name != leg.get_texts()[0].get_fontfamily()[0])
+    facet.apply_font_everywhere(want)
+    assert facet.fig.legends[0].get_texts()[0].get_fontfamily()[0] == want
+
+
 def test_figure_legend_roundtrips(facet):
     for name, value in [("frameon", False), ("fontsize", 9.0),
                         ("title", "Group"), ("loc", "upper right")]:

@@ -172,6 +172,18 @@ MESSAGES = {
     "글꼴:": "Font:",
     "{n}개 대상의 글꼴을 {name}(으)로 바꿨습니다":
         "Changed the font of {n} items to {name}",
+    "그림 전체 글자 크기 바꾸기": "Change the text size everywhere",
+    "그림 전체 글자 크기 바꾸기…": "Change the text size everywhere…",
+    "그림 전체 글자 크기": "Text size everywhere",
+    "모두 이 크기로": "Set every size to",
+    "지금 크기의": "Scale current sizes by",
+    " 배": "x",
+    "배율은 제목과 눈금의 크기 차이를 그대로 둡니다.":
+        "Scaling keeps the size difference between titles and ticks.",
+    "{n}개 대상의 글자 크기를 {v}pt로 바꿨습니다":
+        "Set the text size of {n} items to {v}pt",
+    "{n}개 대상의 글자 크기를 {v}배로 바꿨습니다":
+        "Scaled the text size of {n} items by {v}x",
 
     # --- 대화상자 / 상태줄 -----------------------------------------------
     "캔버스나 트리에서 요소를 선택하세요.":
@@ -184,6 +196,12 @@ MESSAGES = {
     "figtune이 지정한 값 (override)": "Value set by figtune (override)",
     "쉼표로 구분": "comma separated",
     "색 선택": "Pick a color",
+    "기본 색": "Base colors",
+    "CSS 색": "CSS colors",
+    "{label} {n}개": "{label} ({n})",
+    "이름으로 찾기": "Find by name",
+    "사용자 지정…": "Custom…",
+    "취소": "Cancel",
     "텍스트 추가": "Add text",
     "내용:": "Text:",
     "내보내기": "Export",

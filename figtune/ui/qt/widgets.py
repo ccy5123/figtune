@@ -8,14 +8,21 @@ props.REGISTRY가 단일 참조점이라는 원칙이 세 갈래로 갈라진다
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from matplotlib.colors import to_rgb
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox,
-                               QDoubleSpinBox, QHBoxLayout, QLineEdit,
-                               QPushButton, QSpinBox, QWidget)
+from matplotlib.colors import to_hex, to_rgb
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox,
+                               QHBoxLayout, QLineEdit, QPushButton, QSpinBox,
+                               QWidget)
 
+from ...core import palette as P_palette
 from ...core import props as P
 from ...i18n import t as _t
+
+
+def to_hex_or(value, fallback: str) -> str:
+    try:
+        return to_hex(value, keep_alpha=False)
+    except (ValueError, TypeError):
+        return fallback
 
 
 # 글자색을 배경에 맞춰 뒤집는 기준. WCAG 상대휘도에서 흰 글자와 검은 글자의
@@ -59,21 +66,28 @@ class ColorButton(QPushButton):
 
     def setValue(self, v: str | None):
         self._value = v or "#000000"
+        # 배경은 반드시 hex로 넣는다. 'tab:blue'는 matplotlib 이름이지 Qt
+        # 스타일시트 색이 아니라, 그대로 넣으면 규칙 전체가 조용히 버려져
+        # 견본이 빈 버튼으로 남는다.
+        shown = to_hex_or(self._value, "#000000")
         self.setStyleSheet(
             f"QPushButton#{self.OBJECT_NAME} {{"
-            f" background:{self._value};"
-            f" color:{contrasting_text(self._value)};"
+            f" background:{shown};"
+            f" color:{contrasting_text(shown)};"
             " border:1px solid #888; border-radius:3px; }")
-        self.setText(self._value)
+        # 이름이 있으면 이름을 보인다 — 코드에 무엇이라 적을지가 바로 보인다.
+        name = P_palette.name_of(self._value)
+        self.setText(f"{name}  {shown}" if name else shown)
 
     def value(self) -> str:
         return self._value
 
     def _pick(self):
-        c = QColorDialog.getColor(QColor(self._value), self, _t("색 선택"))
-        if c.isValid():
-            self.setValue(c.name())
-            self.changed.emit(c.name())
+        from .palette import pick_color
+        picked = pick_color(self, self._value)
+        if picked:
+            self.setValue(picked)
+            self.changed.emit(picked)
 
 
 class TupleWidget(QWidget):

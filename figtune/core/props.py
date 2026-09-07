@@ -204,12 +204,31 @@ REGISTRY: dict[str, list[Prop]] = {
         P("fontfamily", "font", "글꼴"),
         P("ncols", "int", "열 수", lo=1, hi=8, step=1),
         P("title", "str", "범례 제목"),
+        P("title_fontsize", "float", "제목 크기", lo=1, hi=40, step=0.5),
         P("labelspacing", "float", "항목 간격", lo=0, hi=3, step=0.05),
         P("labels", "strlist", "라벨"),
     ],
 }
 
 COLOR_PROPS = {p.name for props in REGISTRY.values() for p in props if p.kind == "color"}
+
+# 글자 크기를 담는 속성 이름. 종류마다 다르다 — 눈금은 labelsize, 범례 제목은
+# title_fontsize다. 'fontsize'만 찾으면 눈금과 범례 제목이 조용히 빠진다.
+FONT_SIZE_NAMES = ("fontsize", "labelsize", "title_fontsize")
+
+# 글꼴 이름을 담는 속성. 지금은 하나뿐이지만 크기와 짝을 이루게 두어,
+# 한쪽에만 새 이름이 생겼을 때 바로 눈에 띄게 한다.
+FONT_FAMILY_NAMES = ("fontfamily",)
+
+
+def font_props(kind: str, names=FONT_SIZE_NAMES) -> list[str]:
+    """이 종류가 실제로 가진 글자 속성 이름. REGISTRY에서 읽는다.
+
+    목록을 따로 적어 두면 속성을 하나 추가했을 때 '한 번에 바꾸기'에서만
+    빠진다 — 개별로는 되는데 전체로는 안 되는, 알아채기 어려운 어긋남이다.
+    """
+    have = {p.name for p in props_for(kind)}
+    return [n for n in names if n in have]
 
 
 # 미니 툴바에 올릴 속성. 대상마다 서너 개만 두고 나머지는 대화상자로 보낸다.
@@ -859,7 +878,33 @@ def _grid_code(var, axis, name, value):
 
 _LEGEND_KW = ("loc", "bbox_to_anchor", "borderaxespad", "fontfamily",
               "frameon", "fontsize", "ncols",
-              "title", "labelspacing", "labels")
+              "title", "title_fontsize", "labelspacing", "labels")
+
+
+def legend_fonts(kw: dict) -> None:
+    """글꼴 인자를 matplotlib이 받는 형태로 바꾼다. kw를 제자리에서 고친다.
+
+    범례는 글꼴을 세 갈래로 받는다. 항목 라벨은 prop(FontProperties),
+    제목은 title_fontproperties, 그리고 title_fontsize는 둘 중 하나만 쓸 수
+    있다 — 함께 주면 matplotlib이 예외를 던진다.
+
+    fontfamily= 는 조용히 무시된다. 그대로 넘기면 값만 spec에 남고 화면은
+    그대로여서, 고친 것이 왜 안 먹는지 알 길이 없다.
+
+    제목을 따로 두지 않으면 '전체 글꼴'을 바꿔도 범례 제목 하나만 옛 글꼴로
+    남는다. 항목과 제목이 서로 다른 글꼴인 그림은 실수로만 나온다.
+    """
+    family = kw.pop("fontfamily", None)
+    size = kw.pop("title_fontsize", None)
+    if family is not None:
+        kw["prop"] = {"family": family}
+    title = {}
+    if family is not None:
+        title["family"] = family
+    if size is not None:
+        title["size"] = size
+    if title:
+        kw["title_fontproperties"] = title
 
 
 def _decode_loc(leg):
@@ -896,6 +941,9 @@ def _legend_get(ax, name):
         if name == "fontsize":
             texts = leg.get_texts()
             return float(texts[0].get_fontsize()) if texts else None
+        if name == "title_fontsize":
+            t = leg.get_title()
+            return float(t.get_fontsize()) if t is not None else None
         if name == "labels":
             return [t.get_text() for t in leg.get_texts()]
         if name == "ncols":
@@ -925,10 +973,7 @@ def apply_legend(ax, over: dict) -> None:
 
     kw = {k: v for k, v in over.items()
           if k in _LEGEND_KW and k != "labels" and v is not None}
-    if "fontfamily" in kw:
-        # 범례는 글꼴을 prop(FontProperties)으로 받는다. fontfamily= 로는
-        # 안 먹는다 — 조용히 무시되어 값만 spec에 남는다.
-        kw["prop"] = {"family": kw.pop("fontfamily")}
+    legend_fonts(kw)
     if "bbox_to_anchor" in kw:
         kw["bbox_to_anchor"] = tuple(kw["bbox_to_anchor"])
         # 앵커를 주어도 matplotlib은 borderaxespad(기본 0.5 글꼴 단위, 약
@@ -984,10 +1029,13 @@ def apply_fig_legend(fig, over: dict) -> None:
     if over.get("fontsize") is not None:
         for t in leg.get_texts():
             t.set_fontsize(over["fontsize"])
-    if over.get("title_fontsize") is not None:
-        t = leg.get_title()
-        if t is not None:
-            t.set_fontsize(over["title_fontsize"])
+    # 제목도 글자다. 여기서 빼면 '전체 글꼴'이 범례 제목만 건너뛴다.
+    title = leg.get_title()
+    if over.get("title_fontsize") is not None and title is not None:
+        title.set_fontsize(over["title_fontsize"])
+    if over.get("fontfamily") is not None:
+        for t in leg.get_texts() + ([title] if title is not None else []):
+            t.set_fontfamily(over["fontfamily"])
 
 
 def fig_legend_code(over: dict) -> list[str]:

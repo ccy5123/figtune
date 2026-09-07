@@ -970,3 +970,129 @@ def test_apply_font_survives_save_and_reopen(session):
 def test_apply_font_reports_what_it_changed(session):
     n = session.apply_font_everywhere(_pick_font())
     assert n >= 4, n
+
+
+def _sizes(fig):
+    ax = fig.axes[0]
+    out = {"title": ax.title.get_fontsize(),
+           "xlabel": ax.xaxis.label.get_fontsize(),
+           "tick": ax.get_xticklabels()[0].get_fontsize()}
+    leg = ax.get_legend()
+    if leg is not None and leg.get_texts():
+        out["legend"] = leg.get_texts()[0].get_fontsize()
+    return out
+
+
+def test_size_targets_reach_the_ticks(session):
+    """눈금 크기는 labelsize다. 이름만 보고 fontsize를 찾으면 조용히 빠진다."""
+    pairs = session.size_targets()
+    assert ("ax0.xtick.major", "labelsize") in pairs, pairs
+
+
+def test_apply_size_touches_every_text(session):
+    session.apply_size_everywhere(15.0)
+    session.fig.canvas.draw()
+    got = _sizes(session.fig)
+    assert set(got.values()) == {15.0}, got
+
+
+def test_apply_size_is_one_undo_step(session):
+    steps = len(session.history)
+    session.apply_size_everywhere(15.0)
+    assert len(session.history) - steps == 1
+
+    session.history.undo()
+    session.fig.canvas.draw()
+    assert set(_sizes(session.fig).values()) != {15.0}
+
+
+def test_apply_size_survives_save_and_reopen(session):
+    session.apply_size_everywhere(15.0)
+    session.save(install_hook=False)
+    again = Session()
+    again.open(session.script)
+    again.fig.canvas.draw()
+    assert set(_sizes(again.fig).values()) == {15.0}
+
+
+def test_scaling_keeps_the_size_differences(session):
+    """제목과 눈금을 같은 값으로 만들면 그림의 위계가 사라진다."""
+    before = _sizes(session.fig)
+    session.scale_size_everywhere(2.0)
+    session.fig.canvas.draw()
+    after = _sizes(session.fig)
+    for key, was in before.items():
+        assert after[key] == pytest.approx(was * 2.0), key
+
+
+def test_scaling_is_one_undo_step(session):
+    steps = len(session.history)
+    session.scale_size_everywhere(1.5)
+    assert len(session.history) - steps == 1
+
+
+# --- 범례 제목 ------------------------------------------------------------
+#
+# 범례 제목은 항목 라벨과 글꼴이 따로 논다. prop=(FontProperties)은 항목에만
+# 걸리고 제목은 title_fontproperties를 따로 받는다. 그래서 '전체'라고 해 놓고
+# 제목 하나만 옛 글꼴로 남는 일이 생긴다.
+
+TITLED = '''import matplotlib.pyplot as plt
+
+
+def plot(ax):
+    ax.plot([0, 1, 2], [1, 3, 2], label='a')
+    ax.set_title('t')
+    ax.legend(title='key')
+
+
+if __name__ == '__main__':
+    fig, ax = plt.subplots(figsize=(4, 3))
+    plot(ax)
+    plt.show()
+'''
+
+
+@pytest.fixture
+def titled(tmp_path):
+    p = tmp_path / "titled.py"
+    p.write_text(TITLED, encoding="utf-8")
+    s = Session()
+    s.open(p)
+    return s
+
+
+def _legend_title(fig):
+    return fig.axes[0].get_legend().get_title()
+
+
+def test_the_legend_title_follows_the_font_change(titled):
+    want = _pick_font()
+    titled.apply_font_everywhere(want)
+    titled.fig.canvas.draw()
+    assert _legend_title(titled.fig).get_fontfamily()[0] == want
+
+
+def test_the_legend_title_follows_the_size_change(titled):
+    titled.apply_size_everywhere(17.0)
+    titled.fig.canvas.draw()
+    assert _legend_title(titled.fig).get_fontsize() == 17.0
+
+
+def test_the_legend_title_keeps_its_font_through_save_and_reopen(titled):
+    want = _pick_font()
+    titled.apply_font_everywhere(want)
+    titled.apply_size_everywhere(17.0)
+    titled.save(install_hook=False)
+    again = Session()
+    again.open(titled.script)
+    again.fig.canvas.draw()
+    title = _legend_title(again.fig)
+    assert (title.get_fontfamily()[0], title.get_fontsize()) == (want, 17.0)
+
+
+def test_the_legend_title_size_can_be_set_on_its_own(titled):
+    titled.set_prop("ax0.legend", "title_fontsize", 20.0)
+    titled.fig.canvas.draw()
+    assert _legend_title(titled.fig).get_fontsize() == 20.0
+    assert titled.values("ax0.legend")["title_fontsize"] == 20.0

@@ -239,11 +239,11 @@ class Session:
     _CLEARED_BY = {("legend", "loc"): "bbox_to_anchor",
                    ("figlegend", "loc"): "bbox_to_anchor"}
 
-    def text_paths(self) -> list[str]:
-        """글자를 가진 대상 전부. 트리 순서 그대로.
+    def font_targets(self, names) -> list[tuple[str, str]]:
+        """글자 속성을 가진 (대상, 속성) 전부. 트리 순서 그대로.
 
-        rcParams로는 글꼴을 바꿀 수 없다. 이미 만들어진 artist에 소급되지
-        않아, 저장하고 다시 열어도 글자는 그대로다. 그래서 요소마다 override로
+        rcParams로는 바꿀 수 없다. 이미 만들어진 artist에 소급되지 않아,
+        저장하고 다시 열어도 글자는 그대로다. 그래서 요소마다 override로
         남긴다 — 코드에도 그렇게 나가고, 재실행해도 같은 그림이 나온다.
         """
         out = []
@@ -252,9 +252,16 @@ class Session:
                 kind = sel.parse(node.path).kind
             except sel.SelectorError:
                 continue
-            if any(p.name == "fontfamily" for p in P.props_for(kind)):
-                out.append(node.path)
+            out += [(node.path, name) for name in P.font_props(kind, names)]
         return out
+
+    def text_paths(self) -> list[str]:
+        """글꼴을 가진 대상 전부."""
+        return [p for p, _ in self.font_targets(P.FONT_FAMILY_NAMES)]
+
+    def size_targets(self) -> list[tuple[str, str]]:
+        """글자 크기를 가진 (대상, 속성) 전부. 눈금은 labelsize다."""
+        return self.font_targets(P.FONT_SIZE_NAMES)
 
     def apply_font_everywhere(self, family: str) -> int:
         """그림 안의 모든 글자를 한 글꼴로. 바꾼 개수를 돌려준다.
@@ -265,6 +272,27 @@ class Session:
         if paths:
             self.set_props(paths, "fontfamily", family)
         return len(paths)
+
+    def apply_size_everywhere(self, size: float) -> int:
+        """모든 글자를 같은 크기로. 바꾼 개수를 돌려준다."""
+        targets = self.size_targets()
+        self.set_each([(p, n, float(size)) for p, n in targets])
+        return len(targets)
+
+    def scale_size_everywhere(self, factor: float) -> int:
+        """모든 글자를 같은 비율로. 바꾼 개수를 돌려준다.
+
+        전부 같은 값으로 만들면 제목과 눈금이 같아져 그림의 위계가 사라진다.
+        배율은 지금의 크기 차이를 그대로 두고 전체만 키우거나 줄인다.
+        """
+        items = []
+        for path, name in self.size_targets():
+            cur = self.values(path).get(name)
+            if cur is None:
+                continue          # 읽을 수 없으면 곱할 것이 없다
+            items.append((path, name, float(cur) * float(factor)))
+        self.set_each(items)
+        return len(items)
 
     def inactive_props(self, path: str) -> dict:
         """지금 상태에서 효과가 없는 속성 -> 그 이유.
@@ -294,13 +322,20 @@ class Session:
 
     def set_props(self, paths, name: str, value: Any,
                   record: bool = True) -> None:
-        """여러 대상의 같은 속성을 한 번에 바꾼다. 실행 취소는 한 칸이다.
+        """여러 대상의 같은 속성을 한 번에 바꾼다. 실행 취소는 한 칸이다."""
+        self.set_each([(p, name, value) for p in paths], record=record)
+
+    def set_each(self, items, record: bool = True) -> None:
+        """(대상, 속성, 값) 여럿을 한 번에. 실행 취소는 한 칸이다.
 
         대상마다 쌓이면 실행 취소가 일부만 되돌려, 함께 고른 것들이 서로
         다른 값으로 갈라진 채 남는다.
+
+        속성 이름을 대상마다 따로 받는다 — 같은 '글자 크기'라도 눈금은
+        labelsize, 나머지는 fontsize라 하나로 묶을 수 없다.
         """
         cmds = []
-        for path in paths:
+        for path, name, value in items:
             # 함께 지워야 하는 것이 있으면 먼저 지운다. 같은 조작에 딸린
             # 변경이므로 따로 쌓지 않는다 — 따로 쌓으면 실행 취소가 loc만
             # 되돌리고 앵커는 지운 채로 둔다.

@@ -235,3 +235,73 @@ def pick_family(parent, title: str) -> str | None:
     name, ok = QInputDialog.getItem(parent, title, _t("글꼴:"), names,
                                     start, False)
     return name if ok and name else None
+
+
+class SizeDialog(QDialog):
+    """글자 크기를 한 번에 바꾸는 두 가지 방법.
+
+    같은 값으로 맞추기와 배율은 서로 다른 일이다. 전부 12pt로 만들면 제목과
+    눈금이 같아져 그림의 위계가 사라지고, 배율은 지금의 크기 차이를 그대로
+    두고 전체만 키운다. 어느 쪽을 원하는지는 그림마다 다르므로 고르게 한다.
+    """
+
+    def __init__(self, parent=None, title: str | None = None,
+                 current: float = 10.0):
+        from PySide6.QtWidgets import QDoubleSpinBox, QRadioButton
+
+        super().__init__(parent)
+        self.setWindowTitle(title or _t("그림 전체 글자 크기"))
+
+        lay = QVBoxLayout(self)
+        self.same = QRadioButton(_t("모두 이 크기로"))
+        self.same.setChecked(True)
+        self.size = QDoubleSpinBox()
+        self.size.setRange(1, 72)
+        self.size.setSingleStep(0.5)
+        self.size.setValue(float(current))
+        self.size.setSuffix(" pt")
+
+        self.by = QRadioButton(_t("지금 크기의"))
+        self.factor = QDoubleSpinBox()
+        self.factor.setRange(0.1, 10)
+        self.factor.setSingleStep(0.1)
+        self.factor.setValue(1.2)
+        self.factor.setSuffix(_t(" 배"))
+
+        for radio, spin in ((self.same, self.size), (self.by, self.factor)):
+            row = QHBoxLayout()
+            row.addWidget(radio)
+            row.addWidget(spin)
+            row.addStretch(1)
+            lay.addLayout(row)
+
+        lay.addWidget(QLabel(
+            f"<span style='color:#777'>"
+            f"{_t('배율은 제목과 눈금의 크기 차이를 그대로 둡니다.')}</span>"))
+
+        # 라디오를 고르면 그 쪽 숫자만 만질 수 있게 한다. 둘 다 켜져 있으면
+        # 쓰지 않을 값을 만지고 나서 아무 일도 안 일어난다.
+        def sync():
+            self.size.setEnabled(self.same.isChecked())
+            self.factor.setEnabled(self.by.isChecked())
+        self.same.toggled.connect(lambda _: sync())
+        sync()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def choice(self) -> tuple[str, float]:
+        if self.same.isChecked():
+            return ("absolute", self.size.value())
+        return ("scale", self.factor.value())
+
+
+def pick_size(parent, title: str | None = None,
+              current: float = 10.0) -> tuple[str, float] | None:
+    """('absolute', pt) 또는 ('scale', 배). 취소하면 None."""
+    dlg = SizeDialog(parent, title, current)
+    if dlg.exec() == QDialog.Accepted:
+        return dlg.choice()
+    return None
