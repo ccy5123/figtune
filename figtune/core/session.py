@@ -233,6 +233,38 @@ class Session:
     def set_prop(self, path: str, name: str, value: Any, record: bool = True) -> None:
         self.set_props([path], name, value, record=record)
 
+    # 이름 있는 범례 위치를 고르면 함께 지워야 하는 것. 앵커가 남아 있으면
+    # loc은 '축의 어디'가 아니라 '앵커점에 어느 모서리를 맞출지'만 정하므로,
+    # 'upper left'를 골라도 좌상단으로 가지 않는다. 고른 대로 되지 않는다.
+    _CLEARED_BY = {("legend", "loc"): "bbox_to_anchor",
+                   ("figlegend", "loc"): "bbox_to_anchor"}
+
+    def inactive_props(self, path: str) -> dict:
+        """지금 상태에서 효과가 없는 속성 -> 그 이유.
+
+        축 라벨의 좌표를 지정하면 matplotlib의 자동 배치가 꺼지고 labelpad는
+        아무 일도 하지 않게 된다. 칸이 그대로 살아 있으면 값을 넣어도 화면이
+        안 바뀌는 이유를 알 수 없다 — 조용한 무동작이다.
+
+        제목은 다르다. 좌표와 여백이 함께 작동하므로 죽지 않는다.
+        """
+        out: dict[str, str] = {}
+        if sel.parse(path).kind != "axes":
+            return out
+        for which, pad in (("xlabel", "xlabelpad"), ("ylabel", "ylabelpad")):
+            if self.spec.of(f"{path}.{which}").get("position") is not None:
+                out[pad] = _t(
+                    "{which}의 좌표를 지정해 두어 효과가 없습니다. "
+                    "좌표 override를 지우면 다시 살아납니다.", which=which)
+        return out
+
+    def cleared_by(self, path: str, name: str) -> str | None:
+        """이 값을 지정하면 함께 지워야 하는 속성. 없으면 None."""
+        key = (sel.parse(path).kind, name)
+        other = self._CLEARED_BY.get(key)
+        return other if other and self.spec.of(path).get(other) is not None \
+            else None
+
     def set_props(self, paths, name: str, value: Any,
                   record: bool = True) -> None:
         """여러 대상의 같은 속성을 한 번에 바꾼다. 실행 취소는 한 칸이다.
@@ -242,6 +274,14 @@ class Session:
         """
         cmds = []
         for path in paths:
+            # 함께 지워야 하는 것이 있으면 먼저 지운다. 같은 조작에 딸린
+            # 변경이므로 따로 쌓지 않는다 — 따로 쌓으면 실행 취소가 loc만
+            # 되돌리고 앵커는 지운 채로 둔다.
+            other = self.cleared_by(path, name)
+            if other is not None:
+                was = self.recorded_value(path, other)
+                self._apply_raw(path, other, None)
+                cmds.append(Command(path, other, was, None))
             # 값은 spec에 들어가기 전에 정규형으로 접힌다. 여기서 하지 않으면
             # '-'와 'solid'가 서로 다른 override로 남는다. 종류마다 접는
             # 방식이 다를 수 있으므로 대상별로 한다.

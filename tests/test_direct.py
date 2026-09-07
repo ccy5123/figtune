@@ -1492,3 +1492,88 @@ def test_the_thing_being_dragged_is_not_its_own_target(win):
     now = _box(win, "ax0.title")[0]
     release(win.canvas, x + 25, y)
     assert now > left + 15, f"제자리에 얼어붙었습니다: {left} -> {now}"
+
+
+# --- 범례: 이름 있는 위치를 고르면 그리로 간다 ---------------------------------
+#
+# 끌면 bbox_to_anchor가 생긴다. 그것이 남아 있으면 loc은 '축의 어디'가 아니라
+# '앵커점에 범례의 어느 모서리를 맞출지'만 정한다. 그래서 'upper left'를
+# 골라도 좌상단으로 가지 않는다 — 고른 대로 되지 않는 조용한 무동작이다.
+#
+# 드롭다운은 거친 배치, 끌기는 자유 배치. 각 제스처가 결과를 온전히 정한다.
+
+def _legend_corner(win):
+    ax = win.session.fig.axes[0]
+    bb = ax.get_legend().get_window_extent(win.canvas.get_renderer())
+    a = ax.get_window_extent()
+    return ((bb.x0 - a.x0) / a.width, (bb.y1 - a.y0) / a.height)
+
+
+def test_choosing_a_named_position_moves_it_there(win):
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    drag(win.canvas, x, y, x - 60, y - 60)          # 앵커가 생긴다
+    assert win.session.spec.of("ax0.legend").get("bbox_to_anchor") is not None
+
+    win.select("ax0.legend")
+    win.inspector.edited.emit("loc", "upper left")
+    win.session.fig.canvas.draw()
+
+    assert win.session.spec.of("ax0.legend").get("bbox_to_anchor") is None
+    cx, cy = _legend_corner(win)
+    assert cx < 0.1 and cy > 0.9, f"좌상단으로 가지 않았습니다: {cx, cy}"
+
+
+def test_dragging_still_sets_the_anchor(win):
+    """끌기는 그대로여야 한다 — 드롭다운이 앵커를 지운다고 끌기가 막히면 안 된다."""
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    drag(win.canvas, x, y, x - 60, y - 40)
+    over = win.session.spec.of("ax0.legend")
+    assert over.get("bbox_to_anchor") is not None
+    assert over.get("loc") is not None
+
+
+def test_clearing_the_anchor_is_part_of_the_same_undo_step(win):
+    """따로 쌓이면 실행 취소가 loc만 되돌리고 앵커는 지운 채로 둔다."""
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    drag(win.canvas, x, y, x - 60, y - 40)
+    anchor = list(win.session.spec.of("ax0.legend")["bbox_to_anchor"])
+
+    win.select("ax0.legend")
+    steps = len(win.session.history)
+    win.inspector.edited.emit("loc", "lower right")
+    assert len(win.session.history) - steps == 1
+
+    win.undo()
+    assert win.session.spec.of("ax0.legend").get("bbox_to_anchor") == anchor
+
+
+def test_other_legend_props_leave_the_anchor_alone(win):
+    """글자 크기를 바꿨다고 위치가 튀면 안 된다."""
+    ax = win.session.fig.axes[0]
+    x, y = center(win, ax.get_legend())
+    drag(win.canvas, x, y, x - 60, y - 40)
+    anchor = list(win.session.spec.of("ax0.legend")["bbox_to_anchor"])
+
+    win.select("ax0.legend")
+    win.inspector.edited.emit("fontsize", 8.0)
+    assert win.session.spec.of("ax0.legend").get("bbox_to_anchor") == anchor
+
+
+def test_a_dead_pad_field_is_greyed_out(win):
+    """값을 넣어도 아무 일이 없는 칸은 그렇다고 말해야 한다."""
+    cur = win.session.values("ax0.xlabel")["position"]
+    win.session.set_prop("ax0.xlabel", "position", [cur[0] + 0.05, cur[1]])
+    win.select("ax0")
+    _prop, w = win.inspector._rows["xlabelpad"]
+    assert not w.isEnabled()
+    assert "효과가 없습니다" in w.toolTip()
+
+
+def test_live_fields_stay_enabled(win):
+    win.select("ax0")
+    for name in ("xlabelpad", "ylabelpad", "titlepad", "xlim"):
+        _prop, w = win.inspector._rows[name]
+        assert w.isEnabled(), name

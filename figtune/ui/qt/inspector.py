@@ -52,7 +52,7 @@ class Inspector(QScrollArea):
         self.show([path] if path else [], values, overridden)
 
     def show(self, paths, values: dict, overridden: set[str],
-             mixed: set[str] | None = None):
+             mixed: set[str] | None = None, inactive: dict | None = None):
         """paths를 함께 편집한다.
 
         values는 공통 값(모두 같을 때)이고, 값이 갈리는 속성은 mixed에 담겨
@@ -62,6 +62,7 @@ class Inspector(QScrollArea):
         self._clear()
         self._paths = list(paths)
         mixed = mixed or set()
+        inactive = inactive or {}
         if not self._paths:
             self._empty.show()
             return
@@ -82,8 +83,16 @@ class Inspector(QScrollArea):
                             self._emit)
             if w is None:
                 continue
-            form.addRow(self._label(prop, prop.name in overridden, is_mixed),
-                        self._row(w, prop.name))
+            why = inactive.get(prop.name)
+            if why:
+                # 값을 넣어도 아무 일이 없는 칸은 그렇다고 말해야 한다.
+                w.setEnabled(False)
+                w.setToolTip(why)
+            lbl = self._label(prop, prop.name in overridden, is_mixed)
+            if why:
+                lbl.setEnabled(False)
+                lbl.setToolTip(why)
+            form.addRow(lbl, self._row(w, prop.name))
             self._rows[prop.name] = (prop, w)
         self._blocked = False
 

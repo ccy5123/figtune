@@ -1057,7 +1057,9 @@ class MainWindow(QMainWindow):
             self.canvas.bar.hide_bar()
             return
         vals, mixed, over = self._shared_values(picked)
-        self.inspector.show(picked, vals, over, mixed)
+        inactive = (self.session.inactive_props(picked[0])
+                    if len(picked) == 1 else {})
+        self.inspector.show(picked, vals, over, mixed, inactive)
         self.status(picked[0] if len(picked) == 1
                     else _t("{n}개 선택됨", n=len(picked)))
         if not from_tree:

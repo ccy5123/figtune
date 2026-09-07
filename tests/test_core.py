@@ -792,3 +792,82 @@ def test_constrained_layout_is_carried_over(tmp_path):
     s = Session()
     s.open(p)
     assert s.fig.get_layout_engine() is not None
+
+
+# --- 효과 없는 속성은 효과가 없다고 말한다 -------------------------------------
+#
+# 축 라벨의 좌표를 지정하면 matplotlib의 자동 배치가 꺼지고 labelpad는 아무
+# 일도 하지 않게 된다. 인스펙터에 그 칸이 그대로 살아 있으면, 값을 넣어도
+# 화면이 안 바뀌는 이유를 알 수 없다 — 조용한 무동작이다.
+#
+# 좌표를 pad로 나눠 맡기는 방법도 시도했으나, 그 환산이 지금 그려진 기하에
+# 의존해 '저장 후 재실행이 픽셀 단위로 같다'가 깨졌다. 정확한 절대 좌표를
+# 지키고, 대신 죽은 칸을 죽었다고 말한다.
+
+@pytest.fixture
+def geom(session):
+    fig = session.fig
+    fig.canvas.draw()
+    return fig, fig.canvas.get_renderer(), fig.axes[0]
+
+
+def _art(ax, which):
+    return {"title": ax.title, "xlabel": ax.xaxis.label,
+            "ylabel": ax.yaxis.label}[which]
+
+
+def test_nothing_is_inactive_at_first(session):
+    assert session.inactive_props("ax0") == {}
+
+
+@pytest.mark.parametrize("which,pad", [
+    ("xlabel", "xlabelpad"), ("ylabel", "ylabelpad")])
+def test_a_label_position_makes_its_pad_inactive(session, which, pad):
+    cur = session.values(f"ax0.{which}")["position"]
+    session.set_prop(f"ax0.{which}", "position", [cur[0] + 0.05, cur[1]])
+    why = session.inactive_props("ax0")
+    assert pad in why and why[pad]
+
+
+def test_the_title_pad_stays_active(session):
+    """제목은 좌표와 여백이 함께 작동한다 — 죽지 않는다."""
+    cur = session.values("ax0.title")["position"]
+    session.set_prop("ax0.title", "position", [cur[0] + 0.05, cur[1]])
+    assert "titlepad" not in session.inactive_props("ax0")
+
+
+def test_removing_the_position_brings_the_pad_back(session):
+    cur = session.values("ax0.xlabel")["position"]
+    session.set_prop("ax0.xlabel", "position", [cur[0] + 0.05, cur[1]])
+    assert "xlabelpad" in session.inactive_props("ax0")
+    session.reset_prop("ax0.xlabel", "position")
+    assert "xlabelpad" not in session.inactive_props("ax0")
+
+
+@pytest.mark.parametrize("which", ["title", "xlabel", "ylabel"])
+def test_setting_a_position_lands_where_asked(session, geom, which):
+    """정확한 절대 좌표는 그대로 지킨다."""
+    fig, r, ax = geom
+    art = _art(ax, which)
+    b0 = art.get_window_extent(r)
+    a = ax.get_window_extent()
+    cur = session.values(f"ax0.{which}")["position"]
+    session.set_prop(f"ax0.{which}", "position",
+                     [cur[0] + 0.08, cur[1] + 0.06])
+    fig.canvas.draw()
+    b1 = art.get_window_extent(r)
+    assert abs((b1.x0 - b0.x0) - 0.08 * a.width) < 1.5
+    assert abs((b1.y0 - b0.y0) - 0.06 * a.height) < 1.5
+
+
+@pytest.mark.parametrize("which", ["title", "xlabel", "ylabel"])
+def test_the_position_survives_save_and_reopen(session, geom, which):
+    fig, _r, _ax = geom
+    cur = session.values(f"ax0.{which}")["position"]
+    session.set_prop(f"ax0.{which}", "position", [cur[0] + 0.08, cur[1] + 0.06])
+    session.save(install_hook=False)
+    a = session.script.with_name("a.png"); session.export(a, dpi=80)
+
+    again = Session(); again.open(session.script)
+    b = session.script.with_name("b.png"); again.export(b, dpi=80)
+    assert a.read_bytes() == b.read_bytes()

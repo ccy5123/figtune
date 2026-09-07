@@ -172,6 +172,10 @@ MESSAGES = {
     "캔버스나 트리에서 요소를 선택하세요.":
         "Select an element on the canvas or in the tree.",
     "이 속성의 override 제거": "Remove the override on this property",
+    "{which}의 좌표를 지정해 두어 효과가 없습니다. "
+    "좌표 override를 지우면 다시 살아납니다.":
+        "No effect: {which} has explicit coordinates. Remove that override "
+        "to bring this back.",
     "figtune이 지정한 값 (override)": "Value set by figtune (override)",
     "쉼표로 구분": "comma separated",
     "색 선택": "Pick a color",
