@@ -5,6 +5,8 @@
 함께 기억하고 그 차이만 더한다. 커서를 움직이지 않았으면 값도 그대로여야 한다.
 """
 
+from pathlib import Path
+
 import matplotlib
 matplotlib.use("Agg")
 
@@ -398,3 +400,143 @@ def test_page_is_still_not_draggable(fig):
     """종이 자체는 끌 대상이 아니다 — 크기는 인스펙터에서 정한다."""
     t = hit.Target(kind="page", path="fig", label="fig")
     assert drag.begin(fig, t, 0, 0)[0] is None
+
+
+# --- 범례를 놓은 자리에 정확히 둔다 ---------------------------------------------
+#
+# bbox_to_anchor를 주어도 matplotlib은 borderaxespad(기본 0.5 글꼴 단위,
+# 약 7px)를 추가로 밀어 넣는다. 그래서 '지금 자리'를 그대로 앵커로 지정해도
+# 그만큼 어긋난다 — 끌면 커서보다 덜 가고, 놓을 때마다 조금씩 밀린다.
+
+def _corner(ax, fig):
+    leg = ax.get_legend()
+    bb = leg.get_window_extent(fig.canvas.get_renderer())
+    a = ax.get_window_extent()
+    return ((bb.x0 - a.x0) / a.width, (bb.y1 - a.y0) / a.height)
+
+
+def test_anchoring_where_it_already_is_does_not_move_it(fig):
+    """제자리를 앵커로 지정했으면 제자리에 있어야 한다."""
+    from figtune.core import props as P
+
+    ax = fig.axes[0]
+    before = _corner(ax, fig)
+    P.apply_legend(ax, {"loc": "upper left", "bbox_to_anchor": list(before)})
+    fig.canvas.draw()
+    now = _corner(ax, fig)
+
+    a = ax.get_window_extent()
+    assert abs(now[0] - before[0]) * a.width < 0.5
+    assert abs(now[1] - before[1]) * a.height < 0.5
+
+
+def test_the_legend_moves_exactly_as_far_as_the_cursor(tmp_path):
+    """덜 가면 끌 때마다 조금씩 어긋나고, 여러 번 끌면 눈에 띈다.
+
+    실제 앱 경로(Session)로 확인한다. P.apply로 prop을 하나씩 넣으면 범례가
+    매번 새로 만들어져 직전 설정이 사라진다 — apply_legend의 docstring이
+    경고하는 그것이다.
+    """
+    import shutil
+
+    from figtune.core.session import Session
+
+    script = tmp_path / "p.py"
+    shutil.copy(Path(__file__).resolve().parent.parent
+                / "examples" / "panel_uptake.py", script)
+    s = Session()
+    s.open(script)
+    f = s.fig
+    ax = f.axes[0]
+
+    leg = ax.get_legend()
+    x, y = center(leg, f)
+    # 앵커는 끌기 시작 시점의 자리를 기준으로 계산된다. 그러니 기준도
+    # 그때의 자리여야 한다 — 'best'를 고정하는 pin이 범례를 한 번 옮긴다.
+    bb0 = leg.get_window_extent(f.canvas.get_renderer())
+    d, pins = drag.begin(f, hit.Target(kind="legend", path="ax0.legend",
+                                       label="legend", axes=0), x, y)
+    for pin in pins:
+        s.set_prop(pin.path, pin.prop, pin.value)
+
+    ch = drag.update(f, d, x - 80, y - 40)
+    s.set_prop(ch.path, ch.prop, ch.value)
+    f.canvas.draw()
+    bb1 = ax.get_legend().get_window_extent(f.canvas.get_renderer())
+
+    assert abs((bb1.x0 - bb0.x0) - (-80)) < 1.0, bb1.x0 - bb0.x0
+    assert abs((bb1.y0 - bb0.y0) - (-40)) < 1.0, bb1.y0 - bb0.y0
+
+
+# --- 읽은 자리를 그대로 다시 쓰면 제자리 --------------------------------------
+#
+# 축 라벨의 position은 set_label_coords가 받는 '앵커점'이다. 읽을 때 bbox
+# 중심을 돌려주면 정렬(va=top 등)만큼 어긋나고, 끌기는 그만큼 덜 간다.
+# artist 자신의 transform이 앵커를 알고 있으므로 bbox도 정렬도 회전도
+# 볼 필요가 없다.
+
+@pytest.mark.parametrize("path", ["ax0.title", "ax0.xlabel", "ax0.ylabel"])
+def test_reading_and_writing_a_position_does_not_move_it(fig, path):
+    from figtune.core import props as P
+
+    art = {"ax0.title": fig.axes[0].title,
+           "ax0.xlabel": fig.axes[0].xaxis.label,
+           "ax0.ylabel": fig.axes[0].yaxis.label}[path]
+    r = fig.canvas.get_renderer()
+    before = art.get_window_extent(r)
+
+    P.apply(fig, path, "position", P.get(fig, path, "position"))
+    fig.canvas.draw()
+    now = art.get_window_extent(r)
+    assert abs(now.x0 - before.x0) < 0.5, now.x0 - before.x0
+    assert abs(now.y0 - before.y0) < 0.5, now.y0 - before.y0
+
+
+@pytest.mark.parametrize("path,dx,dy", [
+    ("ax0.title", 60, 30),
+    ("ax0.xlabel", 40, 25),
+    ("ax0.ylabel", 35, 20),
+    ("ax0.xlabel", -22, -13),
+])
+def test_a_text_moves_exactly_as_far_as_the_cursor(fig, path, dx, dy):
+    """덜 가면 끌 때마다 어긋나고, 여러 번 끌면 눈에 띈다."""
+    from figtune.core import props as P
+
+    art = {"ax0.title": fig.axes[0].title,
+           "ax0.xlabel": fig.axes[0].xaxis.label,
+           "ax0.ylabel": fig.axes[0].yaxis.label}[path]
+    r = fig.canvas.get_renderer()
+    before = art.get_window_extent(r)
+    x, y = center(art, fig)
+
+    d, _ = drag.begin(fig, hit.Target(kind="text", path=path, label=path,
+                                      axes=0, movable=True), x, y)
+    ch = drag.update(fig, d, x + dx, y + dy)
+    P.apply(fig, ch.path, ch.prop, ch.value)
+    fig.canvas.draw()
+
+    now = art.get_window_extent(r)
+    assert abs((now.x0 - before.x0) - dx) < 1.0, now.x0 - before.x0
+    assert abs((now.y0 - before.y0) - dy) < 1.0, now.y0 - before.y0
+
+
+def test_repeated_drags_do_not_accumulate_error(fig):
+    """한 번에 1px씩 틀리면 열 번 끌었을 때 10px이 된다."""
+    from figtune.core import props as P
+
+    art = fig.axes[0].xaxis.label
+    r = fig.canvas.get_renderer()
+    before = art.get_window_extent(r)
+    target = hit.Target(kind="text", path="ax0.xlabel", label="x",
+                        axes=0, movable=True)
+
+    for _ in range(5):
+        x, y = center(art, fig)
+        d, _ = drag.begin(fig, target, x, y)
+        ch = drag.update(fig, d, x + 10, y + 6)
+        P.apply(fig, ch.path, ch.prop, ch.value)
+        fig.canvas.draw()
+
+    now = art.get_window_extent(r)
+    assert abs((now.x0 - before.x0) - 50) < 1.0, now.x0 - before.x0
+    assert abs((now.y0 - before.y0) - 30) < 1.0, now.y0 - before.y0

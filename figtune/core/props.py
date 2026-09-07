@@ -579,18 +579,22 @@ def _text_position_get(ax, which):
 
     set_label_coords를 한 번도 부르지 않았으면 label.get_position()이 축
     좌표가 아니라 포인트 오프셋을 돌려준다. 그 값을 그대로 보여주면 사용자가
-    끌지도 않았는데 엉뚱한 숫자가 뜬다. 그려진 자리에서 역산한다.
+    끌지도 않았는데 엉뚱한 숫자가 뜬다. 그래서 환산이 필요하다.
+
+    환산은 artist의 transform으로 한다. bbox 중심을 쓰면 안 된다 —
+    set_label_coords가 받는 것은 **앵커점**이므로, 정렬(x라벨은 va=top,
+    y라벨은 ha=center)만큼 어긋나 읽고 그대로 다시 쓰기만 해도 라벨 크기의
+    절반이 밀린다. 끌기가 커서보다 덜 가던 것이 그 값이었다.
+
+    transform은 회전도 이미 담고 있으므로 y라벨의 90°도 따로 다룰 것이 없다.
     """
     if which == "title":
         return list(ax.title.get_position())
     axis = ax.xaxis if which == "xlabel" else ax.yaxis
     art = axis.label
-    if art.get_transform() is ax.transAxes:
-        return list(art.get_position())
     try:
-        bb = art.get_window_extent(ax.figure.canvas.get_renderer())
-        x, y = ax.transAxes.inverted().transform(
-            ((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2))
+        disp = art.get_transform().transform(art.get_position())
+        x, y = ax.transAxes.inverted().transform(disp)
     except Exception:
         return None
     return [round(float(x), 4), round(float(y), 4)]
@@ -839,7 +843,8 @@ def _grid_code(var, axis, name, value):
 
 # --- legend ---------------------------------------------------------------
 
-_LEGEND_KW = ("loc", "bbox_to_anchor", "frameon", "fontsize", "ncols",
+_LEGEND_KW = ("loc", "bbox_to_anchor", "borderaxespad",
+              "frameon", "fontsize", "ncols",
               "title", "labelspacing", "labels")
 
 
@@ -908,6 +913,11 @@ def apply_legend(ax, over: dict) -> None:
           if k in _LEGEND_KW and k != "labels" and v is not None}
     if "bbox_to_anchor" in kw:
         kw["bbox_to_anchor"] = tuple(kw["bbox_to_anchor"])
+        # 앵커를 주어도 matplotlib은 borderaxespad(기본 0.5 글꼴 단위, 약
+        # 7px)를 추가로 밀어 넣는다. 그러면 '지금 자리'를 그대로 앵커로
+        # 지정해도 그만큼 어긋나, 끌 때마다 커서보다 덜 가고 조금씩 밀린다.
+        # 앵커는 '여기에 정확히 둔다'는 뜻이므로 여백을 0으로 둔다.
+        kw.setdefault("borderaxespad", 0.0)
 
     # 범례가 없는 축에 override를 걸었다고 새로 만들면 안 된다. seaborn
     # FacetGrid처럼 범례가 figure 수준에 있는 경우, 패널 안에 엉뚱한 범례가
@@ -1023,6 +1033,11 @@ def legend_code(var: str, over: dict) -> list[str]:
           if k in _LEGEND_KW and k != "labels" and v is not None}
     if "bbox_to_anchor" in kw:
         kw["bbox_to_anchor"] = tuple(kw["bbox_to_anchor"])
+        # 앵커를 주어도 matplotlib은 borderaxespad(기본 0.5 글꼴 단위, 약
+        # 7px)를 추가로 밀어 넣는다. 그러면 '지금 자리'를 그대로 앵커로
+        # 지정해도 그만큼 어긋나, 끌 때마다 커서보다 덜 가고 조금씩 밀린다.
+        # 앵커는 '여기에 정확히 둔다'는 뜻이므로 여백을 0으로 둔다.
+        kw.setdefault("borderaxespad", 0.0)
     if over.get("labels"):
         kw["labels"] = list(over["labels"])
     parts = ", ".join(f"{k}={v!r}" for k, v in sorted(kw.items()))
